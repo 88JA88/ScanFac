@@ -1,0 +1,22 @@
+.source-id-input {
+  display: block;
+  width: 100%;
+  margin-top: 5px;
+  padding: 3px 5px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--teal-dark);
+  font: 600 0.71rem inherit;
+  outline: none;
+}
+
+.source-id-input:hover {
+  background: #f4f7f6;
+}
+
+.source-id-input:focus {
+  border-color: #68a9a4;
+  background: #fff;
+  box-shadow: 0 0 0 3px #d7eeeb;
+}

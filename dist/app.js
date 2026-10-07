@@ -1,12 +1,13 @@
 /*
  * Modèle de document. Les champs date, fournisseur et montant sont les points
  * d'entrée prévus pour un futur module OCR : applyOcrResult(id, result).
+ * sourceScanId est la référence fournie par le scanner ou le logiciel d'import.
  */
 const categories = ["", "Repas", "Transport", "Fournitures", "Hébergement", "Téléphonie", "Autre"];
 let documents = [
-  { id: "SCN-20261007-001", fileName: "ticket_cafe_lilas.jpg", importedAt: "2026-10-07T08:42:00", documentCreatedAt: "2026-10-06", page: 1, category: "Repas", date: "2026-10-06", supplier: "Café des Lilas", amount: "18,50", needsReview: false, validationState: "validated", file: null, url: null },
-  { id: "SCN-20261007-002", fileName: "facture_train_octobre.pdf", importedAt: "2026-10-07T08:43:00", documentCreatedAt: "2026-10-02", page: 1, category: "Transport", date: "2026-10-02", supplier: "SNCF Voyageurs", amount: "84,00", needsReview: true, validationState: "to_review", file: null, url: null },
-  { id: "SCN-20261007-003", fileName: "fournitures-bureau.png", importedAt: "2026-10-07T08:45:00", documentCreatedAt: "", page: 1, category: "Fournitures", date: "", supplier: "", amount: "42,90", needsReview: true, validationState: "draft", file: null, url: null }
+  { id: "demo-cafe", sourceScanId: "", fileName: "ticket_cafe_lilas.jpg", importedAt: "2026-10-07T08:42:00", documentCreatedAt: "2026-10-06", page: 1, category: "Repas", date: "2026-10-06", supplier: "Café des Lilas", amount: "18,50", needsReview: false, validationState: "validated", file: null, url: null },
+  { id: "demo-train", sourceScanId: "", fileName: "facture_train_octobre.pdf", importedAt: "2026-10-07T08:43:00", documentCreatedAt: "2026-10-02", page: 1, category: "Transport", date: "2026-10-02", supplier: "SNCF Voyageurs", amount: "84,00", needsReview: true, validationState: "to_review", file: null, url: null },
+  { id: "demo-fournitures", sourceScanId: "", fileName: "fournitures-bureau.png", importedAt: "2026-10-07T08:45:00", documentCreatedAt: "", page: 1, category: "Fournitures", date: "", supplier: "", amount: "42,90", needsReview: true, validationState: "draft", file: null, url: null }
 ];
 let sortRules = [{ field: "date", direction: "asc" }, { field: "supplier", direction: "asc" }];
 
@@ -38,7 +39,7 @@ function categoryOptions(value) { return categories.map(c => `<option value="${c
 function render() {
   const rows = sortedFilteredDocuments(); count.textContent = `${documents.length} document${documents.length > 1 ? "s" : ""}`;
   body.innerHTML = rows.map(d => `<tr data-id="${d.id}">
-    <td class="source-cell"><button class="source-button" data-action="open-source" title="Voir le scan source">${escapeHtml(d.fileName)}</button><span class="source-meta">${d.id} · importé le ${frenchDate(d.importedAt)}</span></td>
+    <td class="source-cell"><button class="source-button" data-action="open-source" title="Voir le scan source">${escapeHtml(d.fileName)}</button><input class="source-id-input" data-field="sourceScanId" value="${escapeHtml(d.sourceScanId)}" placeholder="ID scan source" aria-label="ID scan source" /><span class="source-meta">Importé le ${frenchDate(d.importedAt)}</span></td>
     <td><select class="cell-select" data-field="category" aria-label="Catégorie">${categoryOptions(d.category)}</select></td>
     <td><input class="cell-input" data-field="date" type="date" value="${d.date}" aria-label="Date" /></td>
     <td><input class="cell-input" data-field="supplier" value="${escapeHtml(d.supplier)}" placeholder="À compléter" aria-label="Fournisseur" /></td>
@@ -50,15 +51,15 @@ function render() {
 }
 function updateState(doc) { doc.validationState = doc.needsReview ? "to_review" : (doc.date && doc.supplier && doc.amount ? "validated" : "draft"); }
 function getDocument(id) { return documents.find(d => d.id === id); }
-function generateId() { return `SCN-${new Date().toISOString().slice(0,10).replaceAll("-", "")}-${String(documents.length + 1).padStart(3, "0")}`; }
-function importFiles(files) { Array.from(files).forEach(file => { const now = new Date().toISOString(); documents.push({ id: generateId(), fileName: file.name, importedAt: now, documentCreatedAt: "", page: 1, category: "", date: "", supplier: "", amount: "", needsReview: true, validationState: "draft", file, url: URL.createObjectURL(file) }); }); render(); }
+function generateId() { return crypto.randomUUID(); }
+function importFiles(files) { Array.from(files).forEach(file => { const now = new Date().toISOString(); documents.push({ id: generateId(), sourceScanId: "", fileName: file.name, importedAt: now, documentCreatedAt: "", page: 1, category: "", date: "", supplier: "", amount: "", needsReview: true, validationState: "draft", file, url: URL.createObjectURL(file) }); }); render(); }
 
 body.addEventListener("input", event => { const field = event.target.dataset.field; if (!field) return; const doc = getDocument(event.target.closest("tr").dataset.id); doc[field] = event.target.type === "checkbox" ? event.target.checked : event.target.value; updateState(doc); });
 body.addEventListener("change", event => { if (event.target.dataset.field) { const doc = getDocument(event.target.closest("tr").dataset.id); doc[event.target.dataset.field] = event.target.type === "checkbox" ? event.target.checked : event.target.value; updateState(doc); render(); } });
 body.addEventListener("click", event => { const row = event.target.closest("tr"); if (!row) return; const doc = getDocument(row.dataset.id); if (event.target.closest('[data-action="delete"]')) { if (confirm(`Supprimer « ${doc.fileName} » du tableau ?`)) { if (doc.url) URL.revokeObjectURL(doc.url); documents = documents.filter(d => d.id !== doc.id); render(); } } if (event.target.closest('[data-action="open-source"]')) openSource(doc); });
 fileInput.addEventListener("change", event => { importFiles(event.target.files); event.target.value = ""; });
 searchInput.addEventListener("input", render); reviewFilter.addEventListener("change", render);
-document.querySelector("#addDemoButton").addEventListener("click", () => { documents.push({ id: generateId(), fileName: "nouveau_justificatif.jpg", importedAt: new Date().toISOString(), documentCreatedAt: "", page: 1, category: "", date: "", supplier: "", amount: "", needsReview: true, validationState: "draft", file: null, url: null }); render(); });
+document.querySelector("#addDemoButton").addEventListener("click", () => { documents.push({ id: generateId(), sourceScanId: "", fileName: "nouveau_justificatif.jpg", importedAt: new Date().toISOString(), documentCreatedAt: "", page: 1, category: "", date: "", supplier: "", amount: "", needsReview: true, validationState: "draft", file: null, url: null }); render(); });
 
 function openSource(doc) { const preview = doc.file?.type.startsWith("image/") ? `<img src="${doc.url}" alt="Aperçu de ${escapeHtml(doc.fileName)}" />` : `<div class="file-placeholder"><b>${doc.file?.type === "application/pdf" ? "PDF" : "SCAN"}</b><span>L’aperçu du fichier source apparaîtra ici.<br>${doc.url && doc.file?.type === "application/pdf" ? "Ouvrez le PDF local pour le consulter." : "Aucun fichier associé à cette ligne de démonstration."}</span></div>`; document.querySelector("#sourceContent").innerHTML = `<h2 class="source-title">${escapeHtml(doc.fileName)}</h2><p class="source-info">Source ${doc.id} · importée le ${frenchDate(doc.importedAt, true)}</p><div class="preview">${preview}</div><div class="source-details"><div><span>Date de création / impression</span>${frenchDate(doc.documentCreatedAt)}</div><div><span>Page</span>${doc.page || "—"}</div></div>`; sourceDialog.showModal(); }
 
@@ -79,8 +80,8 @@ const exportButton = document.querySelector("#exportButton");
 const freshExportButton = exportButton.cloneNode(true);
 exportButton.replaceWith(freshExportButton);
 freshExportButton.addEventListener("click", () => {
-  const headers = ["ID scan", "Fichier source", "Date importation", "Date création/impression", "Page", "Catégorie", "Date", "Fournisseur", "Montant", "À vérifier", "État validation"];
-  const rows = sortedFilteredDocuments().map(d => [d.id, d.fileName, d.importedAt, d.documentCreatedAt, d.page, d.category, d.date, d.supplier, d.amount, d.needsReview ? "Oui" : "Non", d.validationState]);
+  const headers = ["ID scan source", "Fichier source", "Date importation", "Date création/impression", "Page", "Catégorie", "Date", "Fournisseur", "Montant", "À vérifier", "État validation"];
+  const rows = sortedFilteredDocuments().map(d => [d.sourceScanId, d.fileName, d.importedAt, d.documentCreatedAt, d.page, d.category, d.date, d.supplier, d.amount, d.needsReview ? "Oui" : "Non", d.validationState]);
   const csv = [headers, ...rows].map(row => row.map(csvValue).join(";")).join("\r\n");
   const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
   const link = document.createElement("a");
