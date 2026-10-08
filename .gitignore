@@ -1,0 +1,6 @@
+# Fichiers créés sur l'ordinateur de l'utilisateur : jamais publiés.
+.DS_Store
+dist/.DS_Store
+scanfac-*.json
+scanfac-*.csv
+*.xlsx

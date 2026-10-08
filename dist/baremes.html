@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#084d50" /><meta name="apple-mobile-web-app-capable" content="yes" /><meta name="apple-mobile-web-app-title" content="ScanFac" /><title>ScanFac — Paramètres</title>
+    <link rel="manifest" href="manifest.webmanifest" /><link rel="apple-touch-icon" href="assets/logo-ja-192.png" /><link rel="stylesheet" href="styles.css" /><link rel="stylesheet" href="baremes.css" />
+  </head>
+  <body><main class="parameters-shell">
+    <header class="parameters-header"><a class="brand parameters-brand" href="index.html"><img class="app-logo" src="assets/logo-ja-192.png" alt="Logo JA" /><span class="app-name">ScanFac</span></a><h1>Paramètres</h1></header>
+    <section class="parameters-card"><h2>Kilométrage</h2><p>Ces constantes seront utilisées plus tard pour calculer automatiquement les frais kilométriques dans les dépenses.</p>
+      <div class="parameters-table"><table><thead><tr><th>Active</th><th>Puissance fiscale</th><th>Jusqu’à 5 000 km</th><th>5 001 à 20 000 km : coefficient</th><th>Constante</th><th>Au-delà de 20 000 km</th></tr></thead><tbody id="kilometrageBody"></tbody></table></div>
+      <div class="parameters-actions"><button id="saveParameters" class="button secondary">Enregistrer les paramètres</button><button id="restoreDefaults" class="button secondary">Valeurs par défaut</button><span id="saveStatus" aria-live="polite"></span></div>
+    </section>
+  </main><script src="baremes-defaut.js"></script><script src="baremes.js"></script></body>
+</html>

@@ -1,97 +1,355 @@
-/*
- * Modèle de document. Les champs date, fournisseur et montant sont les points
- * d'entrée prévus pour un futur module OCR : applyOcrResult(id, result).
- * sourceScanId est la référence fournie par le scanner ou le logiciel d'import.
- */
-const categories = ["", "Repas", "Transport", "Fournitures", "Hébergement", "Téléphonie", "Autre"];
-let documents = [
-  { id: "demo-cafe", sourceScanId: "", fileName: "ticket_cafe_lilas.jpg", importedAt: "2026-10-07T08:42:00", documentCreatedAt: "2026-10-06", page: 1, category: "Repas", date: "2026-10-06", supplier: "Café des Lilas", amount: "18,50", needsReview: false, validationState: "validated", file: null, url: null },
-  { id: "demo-train", sourceScanId: "", fileName: "facture_train_octobre.pdf", importedAt: "2026-10-07T08:43:00", documentCreatedAt: "2026-10-02", page: 1, category: "Transport", date: "2026-10-02", supplier: "SNCF Voyageurs", amount: "84,00", needsReview: true, validationState: "to_review", file: null, url: null },
-  { id: "demo-fournitures", sourceScanId: "", fileName: "fournitures-bureau.png", importedAt: "2026-10-07T08:45:00", documentCreatedAt: "", page: 1, category: "Fournitures", date: "", supplier: "", amount: "42,90", needsReview: true, validationState: "draft", file: null, url: null }
+// Liste facilement adaptable lorsque les comptes seront définis avec le comptable.
+const expenseTypes = [
+  { label: "Restaurant", account: "" }, { label: "Parking", account: "" },
+  { label: "Autoroute", account: "" }, { label: "Tramway", account: "" },
+  { label: "Taxi", account: "" }, { label: "Hôtel", account: "" },
+  { label: "Carburant", account: "" }, { label: "Fournitures", account: "" },
+  { label: "Téléphone", account: "" }, { label: "Kilométrage", account: "" },
+  { label: "Postage", account: "" }, { label: "Divers", account: "" }
 ];
-let sortRules = [{ field: "date", direction: "asc" }, { field: "supplier", direction: "asc" }];
+const monthLabels = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"];
+// Chaque personne possède une liste continue de dépenses dans son fichier JSON.
+let expenses = [];
+let sequences = {};
+let selectedLabel = "";
+let sortRules = [{ field: "order", direction: "asc" }];
+let monthRange = { from: "", to: "" };
+let monthFilterState = { operator: "=", value: "" };
+let accountantMode = false;
+let masterBackup = null;
+let personName = "";
+let masterFileHandle = null;
+let dataFolderHandle = null;
+let mileageParameters = JSON.parse(JSON.stringify(window.SCANFAC_PARAMETERS_DEFAULT));
+let hasUnsavedChanges = false;
 
-const body = document.querySelector("#documentsBody");
+const body = document.querySelector("#expensesBody");
 const emptyState = document.querySelector("#emptyState");
-const count = document.querySelector("#documentCount");
-const fileInput = document.querySelector("#fileInput");
-const searchInput = document.querySelector("#searchInput");
-const reviewFilter = document.querySelector("#reviewFilter");
+const dateInput = document.querySelector("#expenseDate");
+const amountInput = document.querySelector("#expenseAmount");
+const amountLabel = document.querySelector("#amountLabel");
+const knownPlaces = document.querySelector("#knownPlaces");
+const unsavedNotice = document.querySelector("#unsavedNotice");
 const sortDialog = document.querySelector("#sortDialog");
-const sourceDialog = document.querySelector("#sourceDialog");
-
-function frenchDate(value, withTime = false) {
-  if (!value) return "Non renseignée";
-  const date = new Date(value);
-  return new Intl.DateTimeFormat("fr-FR", withTime ? { dateStyle: "medium", timeStyle: "short" } : { dateStyle: "medium" }).format(date);
+const fromMonth = document.querySelector("#fromMonth");
+const toMonth = document.querySelector("#toMonth");
+const periodFilter = document.querySelector("#periodFilter");
+const monthOperator = document.querySelector("#monthOperator");
+const monthFilter = document.querySelector("#monthFilter");
+const personInput = document.querySelector("#personName");
+const masterSelect = document.querySelector("#masterSelect");
+function renderPerson() { personInput.textContent = personName; }
+function markUnsaved() { hasUnsavedChanges = true; unsavedNotice.hidden = false; }
+function markSaved() { hasUnsavedChanges = false; unsavedNotice.hidden = true; }
+function currentMonthValue() { return new Date().toLocaleDateString("en-CA").slice(0, 7); }
+function renderMonthOptions() {
+  const year = currentMonthValue().slice(0, 4);
+  dateInput.innerHTML = monthLabels.map((label, index) => `<option value="${year}-${String(index + 1).padStart(2, "0")}">${label}</option>`).join("");
 }
 function escapeHtml(value = "") { return String(value).replace(/[&<>'"]/g, char => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", "'":"&#39;", '"':"&quot;" })[char]); }
-function sortedFilteredDocuments() {
-  const search = searchInput.value.trim().toLocaleLowerCase("fr");
-  return documents.filter(d => (!reviewFilter.checked || d.needsReview) && (!search || `${d.fileName} ${d.supplier}`.toLocaleLowerCase("fr").includes(search)))
-    .sort((a, b) => { for (const rule of sortRules) { const av = String(a[rule.field] || ""); const bv = String(b[rule.field] || ""); const compare = av.localeCompare(bv, "fr", { numeric: true }); if (compare) return rule.direction === "asc" ? compare : -compare; } return 0; });
+function amountNumber(value) { return Number(String(value).trim().replace(/\s/g, "").replace(",", ".")); }
+function isMileageExpense() { return selectedLabel === "Kilométrage"; }
+function needsRouteFields(label = selectedLabel) { return label === "Kilométrage" || label === "Autoroute"; }
+function activeMileageCoefficient() {
+  const row = mileageParameters.kilometrage?.[Number(mileageParameters.activePowerIndex || 0)];
+  return row ? amountNumber(row.jusqua5000) : NaN;
 }
-function stateMarkup(doc) {
-  const map = { validated: ["valid", "Validé"], to_review: ["review", "À contrôler"], draft: ["draft", "À compléter"] };
-  const [klass, label] = map[doc.validationState]; return `<span class="status ${klass}">${label}</span>`;
+function calculatedMileageAmount(kilometres) {
+  const coefficient = activeMileageCoefficient();
+  return Number.isFinite(kilometres) && kilometres >= 0 && Number.isFinite(coefficient) ? kilometres * coefficient : NaN;
 }
-function categoryOptions(value) { return categories.map(c => `<option value="${c}" ${c === value ? "selected" : ""}>${c || "—"}</option>`).join(""); }
+function updateExpenseInputMode() {
+  const mileage = isMileageExpense();
+  amountLabel.textContent = mileage ? "Kilomètres" : "Montant TTC";
+  amountInput.placeholder = mileage ? "0" : "0,00";
+}
+function renderKnownPlaces() {
+  const places = [...new Set(expenses.flatMap(expense => [expense.departure, expense.arrival]).filter(Boolean))].sort((a, b) => a.localeCompare(b, "fr"));
+  knownPlaces.innerHTML = places.map(place => `<option value="${escapeHtml(place)}"></option>`).join("");
+}
+function typeFor(label) { return expenseTypes.find(type => type.label === label) || { label, account: "" }; }
+function euro(value) { return new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" }).format(value); }
+function nextOrder(date) {
+  const month = date.slice(5, 7);
+  const existing = expenses.filter(e => e.order?.startsWith(`${month}-`)).map(e => Number(e.order.slice(3)) || 0);
+  sequences[month] = Math.max(sequences[month] || 0, ...existing) + 1;
+  return `${month}-${String(sequences[month]).padStart(3, "0")}`;
+}
+function normalizedExpenses(items) { return items.map(expense => ({ ...expense, date: expense.date?.slice(0, 7) || currentMonthValue() })); }
+function validMaster(backup) { return backup?.format === "scanfac-master" && Array.isArray(backup.bundles); }
+function masterExpenses(backup = masterBackup) {
+  const unique = new Map();
+  normalizedExpenses(backup?.bundles?.flatMap(bundle => bundle.expenses || []) || []).forEach(expense => unique.set(expense.id, expense));
+  return [...unique.values()];
+}
+function masterSequences(backup, items) {
+  const result = {};
+  (backup?.bundles || []).forEach(bundle => Object.entries(bundle.sequences || {}).forEach(([month, number]) => { result[month] = Math.max(result[month] || 0, Number(number) || 0); }));
+  items.forEach(expense => { const month = expense.date?.slice(5, 7), number = Number(expense.order?.slice(3)) || 0; if (month) result[month] = Math.max(result[month] || 0, number); });
+  return result;
+}
+function safeFileName(value) { return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/gi, "-").replace(/(^-|-$)/g, "").toLowerCase() || "sauvegarde"; }
+function newMaster() { return { format: "scanfac-master", version: 1, ownerName: personName, updatedAt: new Date().toISOString(), bundles: [] }; }
+function masterFileName() { return `scanfac-${safeFileName(masterBackup.ownerName || personName)}.json`; }
+function csvFileName() { return `scanfac-${safeFileName(personName || masterBackup?.ownerName || "frais")}-comptable.csv`; }
+function downloadFile(content, type, name) { const blob = new Blob([content], { type }), link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = name; link.click(); URL.revokeObjectURL(link.href); }
+function folderDb() { return new Promise((resolve, reject) => { const request = indexedDB.open("scanfac-local", 1); request.onupgradeneeded = () => request.result.createObjectStore("handles"); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); }); }
+async function storedFolder() {
+  try { const db = await folderDb(); return await new Promise((resolve, reject) => { const request = db.transaction("handles", "readonly").objectStore("handles").get("data-folder"); request.onsuccess = () => { db.close(); resolve(request.result || null); }; request.onerror = () => { db.close(); reject(request.error); }; }); }
+  catch { return null; }
+}
+async function rememberFolder(handle) {
+  try { const db = await folderDb(); await new Promise((resolve, reject) => { const request = db.transaction("handles", "readwrite").objectStore("handles").put(handle, "data-folder"); request.onsuccess = () => { db.close(); resolve(); }; request.onerror = () => { db.close(); reject(request.error); }; }); }
+  catch { /* Le dossier reste disponible pour cette session. */ }
+}
+async function canWriteFolder(handle, ask = false) { if (!handle) return false; const options = { mode: "readwrite" }; if (await handle.queryPermission(options) === "granted") return true; return ask && await handle.requestPermission(options) === "granted"; }
+async function chooseDataFolder() {
+  if (!("showDirectoryPicker" in window)) { alert("Le choix d’un dossier est disponible dans Chrome ou Edge. Les fichiers seront téléchargés de façon classique."); return false; }
+  try { const handle = await window.showDirectoryPicker({ mode: "readwrite" }); if (!await activateFolder(handle)) return false; await rememberFolder(handle); alert(`Dossier de travail sélectionné : ${handle.name}.`); return true; }
+  catch (error) { if (error.name !== "AbortError") alert("Impossible de sélectionner ce dossier."); return false; }
+}
+async function activateFolder(handle) {
+  if (!await canWriteFolder(handle, true)) return false;
+  dataFolderHandle = handle; await loadMileageParameters(handle); await refreshMasterList(handle); return true;
+}
+async function writeToFolder(name, content, type) { const handle = await dataFolderHandle.getFileHandle(name, { create: true }); const writable = await handle.createWritable(); await writable.write(new Blob([content], { type })); await writable.close(); }
+async function refreshMasterList(folder = dataFolderHandle) {
+  try {
+    if (!folder || await folder.queryPermission({ mode: "read" }) !== "granted") { masterSelect.disabled = true; return; }
+    const names = [];
+    for await (const [name, handle] of folder.entries()) if (handle.kind === "file" && /^scanfac-(?!parametres\.json$|baremes\.json$).+\.json$/i.test(name)) names.push(name);
+    names.sort((a, b) => a.localeCompare(b, "fr"));
+    masterSelect.innerHTML = `<option value="">Fichiers enregistrés</option>${names.map(name => `<option value="${escapeHtml(name)}">${escapeHtml(name.replace(/^scanfac-|\.json$/gi, ""))}</option>`).join("")}`;
+    masterSelect.disabled = names.length === 0;
+    masterSelect.title = names.length ? "Choisir un fichier maître à restaurer" : "Aucun fichier maître dans ce dossier";
+  } catch { masterSelect.disabled = true; }
+}
+async function loadMileageParameters(folder) {
+  try {
+    if (!folder || await folder.queryPermission({ mode: "read" }) !== "granted") return;
+    const file = await folder.getFileHandle("scanfac-parametres.json");
+    const data = JSON.parse(await (await file.getFile()).text());
+    if (data?.format === "scanfac-parametres" && Array.isArray(data.kilometrage)) mileageParameters = data;
+  } catch { /* Les valeurs intégrées restent utilisées tant que les paramètres ne sont pas disponibles. */ }
+  updateExpenseInputMode();
+}
+async function exportJson() { const content = JSON.stringify(masterBackup, null, 2); if (dataFolderHandle && await canWriteFolder(dataFolderHandle, true)) { await writeToFolder(masterFileName(), content, "application/json"); return true; } downloadFile(content, "application/json", masterFileName()); return true; }
+function downloadJson() { downloadFile(JSON.stringify(masterBackup, null, 2), "application/json", masterFileName()); }
+async function saveMaster() {
+  masterBackup.updatedAt = new Date().toISOString();
+  if (!dataFolderHandle && "showDirectoryPicker" in window && !await chooseDataFolder()) return false;
+  if (dataFolderHandle && await canWriteFolder(dataFolderHandle, true)) { await writeToFolder(masterFileName(), JSON.stringify(masterBackup, null, 2), "application/json"); await refreshMasterList(); return true; }
+  if (!("showSaveFilePicker" in window)) {
+    alert("L’écriture directe n’est pas disponible dans ce navigateur. Un export JSON va être téléchargé.");
+    downloadJson();
+    return false;
+  }
+  try {
+    if (!masterFileHandle) masterFileHandle = await window.showSaveFilePicker({
+      suggestedName: masterFileName(),
+      types: [{ description: "Sauvegarde ScanFac", accept: { "application/json": [".json"] } }]
+    });
+    const writable = await masterFileHandle.createWritable();
+    await writable.write(JSON.stringify(masterBackup, null, 2)); await writable.close();
+    return true;
+  } catch (error) {
+    if (error.name !== "AbortError") alert("Impossible de mettre à jour le fichier maître.");
+    return false;
+  }
+}
+async function restoreMaster() {
+  try {
+    if ("showOpenFilePicker" in window) {
+      const [handle] = await window.showOpenFilePicker({ types: [{ description: "Sauvegarde ScanFac", accept: { "application/json": [".json"] } }], multiple: false });
+      await applyMasterFile(await handle.getFile(), handle);
+    } else {
+      document.querySelector("#restoreInput").click();
+    }
+  } catch (error) {
+    if (error.name !== "AbortError") throw error;
+  }
+}
+async function applyMasterFile(file, handle = null) {
+  const backup = JSON.parse(await file.text());
+  if (!validMaster(backup)) throw new Error("invalid");
+  masterBackup = backup; masterFileHandle = handle; personName = backup.ownerName || "";
+  expenses = masterExpenses(backup); sequences = masterSequences(backup, expenses);
+  monthRange = { from: "", to: "" }; monthFilterState = { operator: "=", value: "" }; accountantMode = false;
+  markSaved(); renderPerson(); render();
+}
+function isInSelectedPeriod(expense) { return !accountantMode || ((!monthRange.from || expense.date >= monthRange.from) && (!monthRange.to || expense.date <= monthRange.to)); }
+function matchesMonthFilter(expense) {
+  if (!monthFilterState.value) return true;
+  return monthFilterState.operator === "=" ? expense.date === monthFilterState.value : monthFilterState.operator === ">" ? expense.date > monthFilterState.value : expense.date < monthFilterState.value;
+}
+function comparable(expense, field) { return field === "amount" ? amountNumber(expense.amount) : String(expense[field] ?? ""); }
+function sortedFilteredExpenses() {
+  return expenses.filter(e => isInSelectedPeriod(e) && matchesMonthFilter(e)).sort((a, b) => {
+    for (const rule of sortRules) {
+      const av = comparable(a, rule.field), bv = comparable(b, rule.field);
+      const result = typeof av === "number" ? av - bv : av.localeCompare(bv, "fr", { numeric: true });
+      if (result) return rule.direction === "asc" ? result : -result;
+    }
+    return 0;
+  });
+}
+function monthName(value) { return new Intl.DateTimeFormat("fr-FR", { month: "long", year: "numeric" }).format(new Date(`${value}-01T12:00:00`)); }
+function renderPeriodFilter() {
+  const months = [...new Set(expenses.map(expense => expense.date))].sort();
+  periodFilter.hidden = !accountantMode || months.length === 0;
+  if (!accountantMode || !months.length) return;
+  const options = months.map(month => `<option value="${month}">${monthName(month)}</option>`).join("");
+  fromMonth.innerHTML = options; toMonth.innerHTML = options;
+  if (!months.includes(monthRange.from)) monthRange.from = months[0];
+  if (!months.includes(monthRange.to)) monthRange.to = months[months.length - 1];
+  fromMonth.value = monthRange.from; toMonth.value = monthRange.to;
+}
+function renderMonthFilter() {
+  const year = (dateInput.value || currentMonthValue()).slice(0, 4);
+  const allMonthsOfYear = monthLabels.map((_, index) => `${year}-${String(index + 1).padStart(2, "0")}`);
+  const months = [...new Set([...allMonthsOfYear, ...expenses.map(expense => expense.date)])].sort();
+  if (!months.includes(monthFilterState.value)) monthFilterState.value = "";
+  monthOperator.value = monthFilterState.operator;
+  monthFilter.innerHTML = `<option value="">Tous</option>${months.map(month => `<option value="${month}">${monthName(month)}</option>`).join("")}`;
+  monthFilter.value = monthFilterState.value;
+}
+function labelOptions(value) { return expenseTypes.map(type => `<option value="${escapeHtml(type.label)}" ${type.label === value ? "selected" : ""}>${escapeHtml(type.label)}</option>`).join(""); }
+function renderNatureList() {
+  document.querySelector("#natureList").innerHTML = expenseTypes.map(type => `<button type="button" class="nature-button ${type.label === selectedLabel ? "selected" : ""}" data-label="${escapeHtml(type.label)}">${escapeHtml(type.label)}</button>`).join("");
+}
+function renderTotals() {
+  const periodExpenses = expenses.filter(expense => isInSelectedPeriod(expense) && matchesMonthFilter(expense));
+  const total = periodExpenses.reduce((sum, expense) => sum + amountNumber(expense.amount), 0);
+  const kilometres = periodExpenses.filter(expense => expense.label === "Kilométrage").reduce((sum, expense) => sum + amountNumber(expense.kilometres || 0), 0);
+  document.querySelector("#grandTotal").textContent = euro(total);
+  document.querySelector("#kilometerTotal").textContent = kilometres ? `${new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 2 }).format(kilometres)} km` : "";
+  document.querySelector("#periodLabel").textContent = `${periodExpenses.length} dépense${periodExpenses.length > 1 ? "s" : ""} enregistrée${periodExpenses.length > 1 ? "s" : ""}`;
+  const sums = new Map(); periodExpenses.forEach(e => sums.set(e.label, (sums.get(e.label) || 0) + amountNumber(e.amount)));
+  document.querySelector("#labelTotals").innerHTML = sums.size
+    ? [...sums.entries()].sort((a,b) => a[0].localeCompare(b[0], "fr")).map(([label, total]) => `<span>${escapeHtml(label)} <b>${euro(total)}</b></span>`).join("")
+    : "<span>Les totaux apparaîtront ici.</span>";
+}
 function render() {
-  const rows = sortedFilteredDocuments(); count.textContent = `${documents.length} document${documents.length > 1 ? "s" : ""}`;
-  body.innerHTML = rows.map(d => `<tr data-id="${d.id}">
-    <td class="source-cell"><button class="source-button" data-action="open-source" title="Voir le scan source">${escapeHtml(d.fileName)}</button><input class="source-id-input" data-field="sourceScanId" value="${escapeHtml(d.sourceScanId)}" placeholder="ID scan source" aria-label="ID scan source" /><span class="source-meta">Importé le ${frenchDate(d.importedAt)}</span></td>
-    <td><select class="cell-select" data-field="category" aria-label="Catégorie">${categoryOptions(d.category)}</select></td>
-    <td><input class="cell-input" data-field="date" type="date" value="${d.date}" aria-label="Date" /></td>
-    <td><input class="cell-input" data-field="supplier" value="${escapeHtml(d.supplier)}" placeholder="À compléter" aria-label="Fournisseur" /></td>
-    <td><input class="cell-input amount" data-field="amount" inputmode="decimal" value="${escapeHtml(d.amount)}" placeholder="0,00" aria-label="Montant" /></td>
-    <td><label class="review-check" title="Signaler à vérifier"><input data-field="needsReview" type="checkbox" ${d.needsReview ? "checked" : ""} aria-label="À vérifier" /></label></td>
-    <td>${stateMarkup(d)}</td><td><button class="delete-button" data-action="delete" aria-label="Supprimer ${escapeHtml(d.fileName)}" title="Supprimer">×</button></td>
-  </tr>`).join("");
-  emptyState.hidden = rows.length !== 0;
+  renderKnownPlaces();
+  renderMonthFilter();
+  const rows = sortedFilteredExpenses();
+  document.querySelector("#expenseCount").textContent = `${expenses.length} dépense${expenses.length > 1 ? "s" : ""}`;
+  body.innerHTML = rows.map(e => { const route = needsRouteFields(e.label), direction = e.routeDirection || "↔"; return `<tr data-id="${e.id}"><td><strong class="order-number">${escapeHtml(e.order)}</strong></td><td><select class="cell-select" data-field="label" aria-label="Libellé">${labelOptions(e.label)}</select></td><td><input class="cell-input amount" data-field="amount" inputmode="decimal" value="${escapeHtml(e.amount)}" aria-label="Montant TTC" ${e.label === "Kilométrage" ? "readonly title=\"Montant calculé à partir des kilomètres\"" : ""} /></td><td>${route ? `<input class="cell-input route-input" data-field="departure" value="${escapeHtml(e.departure || "")}" placeholder="Départ" aria-label="Départ" list="knownPlaces" />` : ""}</td><td>${route ? `<select class="cell-select direction-select" data-field="routeDirection" aria-label="Sens du trajet"><option value="→" ${direction === "→" ? "selected" : ""}>⟶</option><option value="↔" ${direction === "↔" ? "selected" : ""}>⟷</option></select>` : ""}</td><td>${route ? `<input class="cell-input route-input" data-field="arrival" value="${escapeHtml(e.arrival || "")}" placeholder="Arrivée" aria-label="Arrivée" list="knownPlaces" />` : ""}</td><td>${e.label === "Kilométrage" ? `<input class="cell-input kilometer-recap" value="${escapeHtml(e.kilometres ?? "")} km" aria-label="Kilomètres" readonly />` : ""}</td><td><button class="delete-button" data-action="delete" aria-label="Supprimer ${escapeHtml(e.order)}" title="Supprimer">×</button></td></tr>`; }).join("");
+  if (emptyState) emptyState.hidden = rows.length !== 0; renderTotals(); renderPeriodFilter();
 }
-function updateState(doc) { doc.validationState = doc.needsReview ? "to_review" : (doc.date && doc.supplier && doc.amount ? "validated" : "draft"); }
-function getDocument(id) { return documents.find(d => d.id === id); }
-function generateId() { return crypto.randomUUID(); }
-function importFiles(files) { Array.from(files).forEach(file => { const now = new Date().toISOString(); documents.push({ id: generateId(), sourceScanId: "", fileName: file.name, importedAt: now, documentCreatedAt: "", page: 1, category: "", date: "", supplier: "", amount: "", needsReview: true, validationState: "draft", file, url: URL.createObjectURL(file) }); }); render(); }
-
-body.addEventListener("input", event => { const field = event.target.dataset.field; if (!field) return; const doc = getDocument(event.target.closest("tr").dataset.id); doc[field] = event.target.type === "checkbox" ? event.target.checked : event.target.value; updateState(doc); });
-body.addEventListener("change", event => { if (event.target.dataset.field) { const doc = getDocument(event.target.closest("tr").dataset.id); doc[event.target.dataset.field] = event.target.type === "checkbox" ? event.target.checked : event.target.value; updateState(doc); render(); } });
-body.addEventListener("click", event => { const row = event.target.closest("tr"); if (!row) return; const doc = getDocument(row.dataset.id); if (event.target.closest('[data-action="delete"]')) { if (confirm(`Supprimer « ${doc.fileName} » du tableau ?`)) { if (doc.url) URL.revokeObjectURL(doc.url); documents = documents.filter(d => d.id !== doc.id); render(); } } if (event.target.closest('[data-action="open-source"]')) openSource(doc); });
-fileInput.addEventListener("change", event => { importFiles(event.target.files); event.target.value = ""; });
-searchInput.addEventListener("input", render); reviewFilter.addEventListener("change", render);
-document.querySelector("#addDemoButton").addEventListener("click", () => { documents.push({ id: generateId(), sourceScanId: "", fileName: "nouveau_justificatif.jpg", importedAt: new Date().toISOString(), documentCreatedAt: "", page: 1, category: "", date: "", supplier: "", amount: "", needsReview: true, validationState: "draft", file: null, url: null }); render(); });
-
-function openSource(doc) { const preview = doc.file?.type.startsWith("image/") ? `<img src="${doc.url}" alt="Aperçu de ${escapeHtml(doc.fileName)}" />` : `<div class="file-placeholder"><b>${doc.file?.type === "application/pdf" ? "PDF" : "SCAN"}</b><span>L’aperçu du fichier source apparaîtra ici.<br>${doc.url && doc.file?.type === "application/pdf" ? "Ouvrez le PDF local pour le consulter." : "Aucun fichier associé à cette ligne de démonstration."}</span></div>`; document.querySelector("#sourceContent").innerHTML = `<h2 class="source-title">${escapeHtml(doc.fileName)}</h2><p class="source-info">Source ${doc.id} · importée le ${frenchDate(doc.importedAt, true)}</p><div class="preview">${preview}</div><div class="source-details"><div><span>Date de création / impression</span>${frenchDate(doc.documentCreatedAt)}</div><div><span>Page</span>${doc.page || "—"}</div></div>`; sourceDialog.showModal(); }
-
+function getExpense(id) { return expenses.find(e => e.id === id); }
+function updateExpense(expense, field, value) {
+  if (field === "amount") { const amount = amountNumber(value); if (!Number.isFinite(amount) || amount < 0) return false; expense.amount = amount.toFixed(2).replace(".", ","); }
+  else if (field === "label") { expense.label = value; expense.account = typeFor(value).account; }
+  else expense[field] = value;
+  return true;
+}
+document.querySelector("#natureList").addEventListener("click", event => {
+  const button = event.target.closest("[data-label]"); if (!button) return;
+  selectedLabel = button.dataset.label; renderNatureList(); updateExpenseInputMode(); amountInput.focus();
+});
+document.querySelector("#expenseForm").addEventListener("submit", event => {
+  event.preventDefault(); const amount = amountNumber(amountInput.value);
+  if (!selectedLabel) { alert("Choisissez une nature de frais."); return; }
+  if (!dateInput.value || !Number.isFinite(amount) || amount < 0) { amountInput.setCustomValidity(isMileageExpense() ? "Indiquez un nombre de kilomètres valide." : "Indiquez un montant TTC valide."); amountInput.reportValidity(); return; }
+  const type = typeFor(selectedLabel);
+  const calculatedAmount = isMileageExpense() ? calculatedMileageAmount(amount) : amount;
+  if (!Number.isFinite(calculatedAmount)) { alert("Le coefficient kilométrique actif est invalide. Vérifiez les Paramètres."); return; }
+  expenses.push({ id: crypto.randomUUID(), order: nextOrder(dateInput.value), date: dateInput.value, label: type.label, account: type.account, amount: calculatedAmount.toFixed(2).replace(".", ","), kilometres: isMileageExpense() ? amount : undefined, routeDirection: needsRouteFields() ? "↔" : undefined });
+  markUnsaved(); selectedLabel = ""; amountInput.value = ""; amountInput.setCustomValidity(""); renderNatureList(); updateExpenseInputMode(); render(); amountInput.focus();
+});
+body.addEventListener("change", event => {
+  const field = event.target.dataset.field; if (!field) return;
+  const expense = getExpense(event.target.closest("tr").dataset.id);
+  if (!updateExpense(expense, field, event.target.value)) { event.target.setCustomValidity("Montant invalide."); event.target.reportValidity(); } else markUnsaved();
+  render();
+});
+body.addEventListener("click", event => {
+  const button = event.target.closest('[data-action="delete"]'); if (!button) return;
+  const expense = getExpense(button.closest("tr").dataset.id);
+  if (confirm(`Supprimer la dépense ${expense.order} ? Son numéro ne sera jamais réutilisé.`)) { expenses = expenses.filter(e => e.id !== expense.id); markUnsaved(); render(); }
+});
+monthOperator.addEventListener("change", () => { monthFilterState.operator = monthOperator.value; render(); });
+monthFilter.addEventListener("change", () => { monthFilterState.value = monthFilter.value; render(); });
+fromMonth.addEventListener("change", () => { monthRange.from = fromMonth.value; if (monthRange.from > monthRange.to) monthRange.to = monthRange.from; render(); });
+toMonth.addEventListener("change", () => { monthRange.to = toMonth.value; if (monthRange.to < monthRange.from) monthRange.from = monthRange.to; render(); });
+const fields = [{ value:"date", label:"Mois" }, { value:"label", label:"Libellé" }, { value:"amount", label:"Montant TTC" }, { value:"order", label:"N° d’ordre" }];
 const sortRulesEl = document.querySelector("#sortRules");
-const fields = [{ value:"date", label:"Date" }, { value:"supplier", label:"Fournisseur" }, { value:"category", label:"Catégorie" }, { value:"amount", label:"Montant" }, { value:"fileName", label:"Nom du fichier" }];
-function renderSortRules() { sortRulesEl.innerHTML = sortRules.map((rule, index) => `<div class="sort-rule"><span class="rule-number">${index + 1}</span><select class="rule-select" data-sort-field="${index}">${fields.map(f => `<option value="${f.value}" ${f.value === rule.field ? "selected" : ""}>${f.label}</option>`).join("")}</select><select class="rule-select" data-sort-direction="${index}"><option value="asc" ${rule.direction === "asc" ? "selected" : ""}>Croissant</option><option value="desc" ${rule.direction === "desc" ? "selected" : ""}>Décroissant</option></select><button type="button" class="remove-rule" data-remove-rule="${index}" aria-label="Supprimer ce critère">×</button></div>`).join(""); }
-document.querySelector("#sortButton").addEventListener("click", () => { renderSortRules(); sortDialog.showModal(); });
-document.querySelector("#addSortRule").addEventListener("click", () => { sortRules.push({ field: "date", direction: "asc" }); renderSortRules(); });
+function renderSortRules() { sortRulesEl.innerHTML = sortRules.map((rule, index) => `<div class="sort-rule"><span class="rule-number">${index + 1}</span><select class="rule-select" data-sort-field="${index}">${fields.map(field => `<option value="${field.value}" ${field.value === rule.field ? "selected" : ""}>${field.label}</option>`).join("")}</select><select class="rule-select" data-sort-direction="${index}"><option value="asc" ${rule.direction === "asc" ? "selected" : ""}>Croissant</option><option value="desc" ${rule.direction === "desc" ? "selected" : ""}>Décroissant</option></select><button type="button" class="remove-rule" data-remove-rule="${index}" aria-label="Supprimer ce critère">×</button></div>`).join(""); }
+document.querySelector("#sortByMonthButton").addEventListener("click", () => { sortRules = [{ field: "date", direction: "asc" }, { field: "label", direction: "asc" }, { field: "order", direction: "asc" }]; render(); });
+document.querySelector("#sortByLabelButton").addEventListener("click", () => { sortRules = [{ field: "label", direction: "asc" }, { field: "date", direction: "asc" }, { field: "order", direction: "asc" }]; render(); });
+document.querySelector("#addSortRule").addEventListener("click", () => { sortRules.push({ field: "order", direction: "asc" }); renderSortRules(); });
 sortRulesEl.addEventListener("change", event => { const index = event.target.dataset.sortField ?? event.target.dataset.sortDirection; if (index !== undefined) sortRules[index][event.target.dataset.sortField !== undefined ? "field" : "direction"] = event.target.value; });
 sortRulesEl.addEventListener("click", event => { const index = event.target.dataset.removeRule; if (index !== undefined && sortRules.length > 1) { sortRules.splice(index, 1); renderSortRules(); } });
-document.querySelector("#applySort").addEventListener("click", () => render());
-
+document.querySelector("#applySort").addEventListener("click", render);
 function csvValue(value) { return `"${String(value ?? "").replaceAll('"', '""')}"`; }
-document.querySelector("#exportButton").addEventListener("click", () => { const headers = ["ID scan", "Fichier source", "Date importation", "Date création/impression", "Page", "Catégorie", "Date", "Fournisseur", "Montant", "À vérifier", "État validation"]; const lines = [headers, ...sortedFilteredDocuments().map(d => [d.id,d.fileName,d.importedAt,d.documentCreatedAt,d.page,d.category,d.date,d.supplier,d.amount,d.needsReview ? "Oui" : "Non",d.validationState])].map(row => row.map(csvValue).join(";")); const blob = new Blob(["\\uFEFF" + lines.join("\\r\\n")], { type:"text/csv;charset=utf-8" }); const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = `scanfac-export-${new Date().toISOString().slice(0,10)}.csv`; link.click(); URL.revokeObjectURL(link.href); });
-
-// Replace the initial button node so the export handler remains isolated and easy to evolve.
-const exportButton = document.querySelector("#exportButton");
-const freshExportButton = exportButton.cloneNode(true);
-exportButton.replaceWith(freshExportButton);
-freshExportButton.addEventListener("click", () => {
-  const headers = ["ID scan source", "Fichier source", "Date importation", "Date création/impression", "Page", "Catégorie", "Date", "Fournisseur", "Montant", "À vérifier", "État validation"];
-  const rows = sortedFilteredDocuments().map(d => [d.sourceScanId, d.fileName, d.importedAt, d.documentCreatedAt, d.page, d.category, d.date, d.supplier, d.amount, d.needsReview ? "Oui" : "Non", d.validationState]);
-  const csv = [headers, ...rows].map(row => row.map(csvValue).join(";")).join("\r\n");
-  const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
-  const link = document.createElement("a");
-  link.href = URL.createObjectURL(blob);
-  link.download = "scanfac-export-" + new Date().toISOString().slice(0, 10) + ".csv";
-  link.click();
-  URL.revokeObjectURL(link.href);
+async function exportCsv() {
+  const headers = ["N° d’ordre", "Mois de saisie", "Libellé", "N° compte comptable", "Montant TTC", "Départ", "Sens", "Arrivée", "Kilomètres"];
+  const byMonthThenDate = expenses.filter(isInSelectedPeriod).sort((a, b) => a.date.localeCompare(b.date) || a.order.localeCompare(b.order, "fr", { numeric: true }));
+  const csv = [headers, ...byMonthThenDate.map(e => [e.order, e.date, e.label, e.account, e.amount, e.departure, e.routeDirection, e.arrival, e.kilometres])].map(row => row.map(csvValue).join(";")).join("\r\n");
+  const content = "\uFEFF" + csv;
+  if (dataFolderHandle && await canWriteFolder(dataFolderHandle, true)) {
+    try { await writeToFolder(csvFileName(), content, "text/csv;charset=utf-8"); } catch { alert("Impossible d’écrire le CSV dans le dossier choisi."); }
+  } else downloadFile(content, "text/csv;charset=utf-8", csvFileName());
+}
+document.querySelector("#exportButton").addEventListener("click", exportCsv);
+document.querySelector("#sendEmailButton").addEventListener("click", async () => {
+  const email = document.querySelector("#accountantEmail");
+  if (!email.checkValidity()) { email.reportValidity(); return; }
+  const subject = "ScanFac — dépenses professionnelles";
+  const body = `Bonjour,\n\nVeuillez trouver ci-joint l’export CSV ScanFac (${csvFileName()}).\n\nCordialement,`;
+  window.location.href = `mailto:${email.value.trim()}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  void exportCsv();
 });
-
-// Point d'intégration OCR ultérieur : applyOcrResult(id, { date, supplier, amount, documentCreatedAt }).
-function applyOcrResult(id, result) { const doc = getDocument(id); if (!doc) return; ["date", "supplier", "amount", "documentCreatedAt"].forEach(field => { if (result[field] !== undefined) doc[field] = result[field]; }); doc.needsReview = true; updateState(doc); render(); }
-window.applyOcrResult = applyOcrResult;
-render();
+document.querySelector("#backupButton").addEventListener("click", async () => {
+  if (!expenses.length) { alert("Ajoutez au moins une dépense avant de sauvegarder."); return; }
+  if (!personName) { alert("Choisissez d’abord « Nouveau nom » ou restaurez un fichier maître."); return; }
+  if (masterBackup && masterBackup.ownerName && masterBackup.ownerName !== personName) { alert("Cliquez sur « Nouvelle personne » avant de commencer une comptabilité différente."); return; }
+  if (!masterBackup) masterBackup = newMaster();
+  masterBackup.ownerName = personName;
+  // Les anciens fichiers à plusieurs liasses sont conservés à la lecture, puis
+  // réunis en une seule liste continue lors de leur prochaine sauvegarde.
+  masterBackup.bundles = [{ id: masterBackup.bundles[0]?.id || crypto.randomUUID(), savedAt: new Date().toISOString(), expenses, sequences }];
+  if (await saveMaster()) markSaved();
+});
+document.querySelector("#newPersonButton").addEventListener("click", () => {
+  const nextName = prompt("Nom de la personne :")?.trim();
+  if (!nextName) return;
+  if (!confirm(`Commencer une nouvelle comptabilité pour « ${nextName} » ? La liste affichée sera vidée, sans supprimer les fichiers JSON existants.`)) return;
+  personName = nextName; masterBackup = null; masterFileHandle = null; expenses = []; sequences = {}; monthRange = { from: "", to: "" }; monthFilterState = { operator: "=", value: "" }; accountantMode = false; markSaved(); renderPerson(); render(); amountInput.focus();
+});
+document.querySelector("#newExpenseButton").addEventListener("click", () => {
+  selectedLabel = ""; dateInput.value = currentMonthValue(); amountInput.value = "";
+  renderNatureList(); updateExpenseInputMode(); amountInput.focus();
+});
+document.querySelector("#openMasterButton").addEventListener("click", async () => {
+  try {
+    await restoreMaster();
+    if (masterBackup) alert(`Fichier maître restauré : ${expenses.length} dépense(s) affichée(s).`);
+  } catch { alert("Ce fichier n’est pas un fichier maître ScanFac valide."); }
+});
+masterSelect.addEventListener("change", async () => {
+  if (!masterSelect.value || !dataFolderHandle) return;
+  try { const handle = await dataFolderHandle.getFileHandle(masterSelect.value); await applyMasterFile(await handle.getFile(), handle); alert(`Fichier maître restauré : ${expenses.length} dépense(s) affichée(s).`); }
+  catch { alert("Impossible de restaurer ce fichier maître."); }
+});
+document.querySelector("#accountantButton").addEventListener("click", async () => {
+  if (!masterBackup) { alert("Restaurez d’abord le fichier maître de cette personne."); return; }
+  if (!confirm(`Préparer l’export comptable avec ${expenses.length} dépense(s) ?`)) return;
+  accountantMode = true; monthRange = { from: "", to: "" }; render();
+});
+document.querySelector("#exportJsonButton").addEventListener("click", async () => {
+  if (!masterBackup) { alert("Aucun fichier maître à exporter."); return; }
+  try { await exportJson(); } catch { alert("Impossible d’exporter le fichier JSON."); }
+});
+document.querySelector("#folderButton").addEventListener("click", async () => { if (!dataFolderHandle || !await activateFolder(dataFolderHandle)) await chooseDataFolder(); });
+document.querySelector("#restoreInput").addEventListener("change", async event => {
+  const file = event.target.files?.[0]; event.target.value = "";
+  if (!file) return;
+  try { await applyMasterFile(file); alert(`Fichier maître restauré : ${expenses.length} dépense(s) affichée(s).`); }
+  catch { alert("Ce fichier n’est pas un fichier maître ScanFac valide."); }
+});
+storedFolder().then(async handle => { if (!handle) return; dataFolderHandle = handle; if (await canWriteFolder(handle)) { await loadMileageParameters(handle); await refreshMasterList(handle); } });
+window.addEventListener("beforeunload", event => { if (!hasUnsavedChanges) return; event.preventDefault(); event.returnValue = ""; });
+if ("serviceWorker" in navigator && location.protocol !== "file:") window.addEventListener("load", () => navigator.serviceWorker.register("service-worker.js").catch(() => {}));
+renderPerson(); renderMonthOptions(); dateInput.value = currentMonthValue(); renderNatureList(); updateExpenseInputMode(); render();
