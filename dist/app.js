@@ -222,12 +222,18 @@ function renderTotals() {
   const periodExpenses = expenses.filter(expense => isInSelectedPeriod(expense) && matchesMonthFilter(expense));
   const total = periodExpenses.reduce((sum, expense) => sum + amountNumber(expense.amount), 0);
   const kilometres = periodExpenses.filter(expense => expense.label === "Kilométrage").reduce((sum, expense) => sum + amountNumber(expense.kilometres || 0), 0);
+  const groupByMonth = sortRules[0]?.field === "date";
   document.querySelector("#grandTotal").textContent = euro(total);
   document.querySelector("#kilometerTotal").textContent = kilometres ? `${new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 2 }).format(kilometres)} km` : "";
   document.querySelector("#periodLabel").textContent = `${periodExpenses.length} dépense${periodExpenses.length > 1 ? "s" : ""} enregistrée${periodExpenses.length > 1 ? "s" : ""}`;
-  const sums = new Map(); periodExpenses.forEach(e => sums.set(e.label, (sums.get(e.label) || 0) + amountNumber(e.amount)));
+  document.querySelector("#totalsHeading").textContent = groupByMonth ? "Totaux par mois" : "Totaux par libellé";
+  // L'ordre d'apparition des groupes suit le tri actif du tableau.
+  const sums = new Map(); sortedFilteredExpenses().forEach(e => {
+    const key = groupByMonth ? monthName(e.date) : e.label;
+    sums.set(key, (sums.get(key) || 0) + amountNumber(e.amount));
+  });
   document.querySelector("#labelTotals").innerHTML = sums.size
-    ? [...sums.entries()].sort((a,b) => a[0].localeCompare(b[0], "fr")).map(([label, total]) => `<span>${escapeHtml(label)} <b>${euro(total)}</b></span>`).join("")
+    ? [...sums.entries()].map(([label, total]) => `<span>${escapeHtml(label)} <b>${euro(total)}</b></span>`).join("")
     : "<span>Les totaux apparaîtront ici.</span>";
 }
 function render() {
