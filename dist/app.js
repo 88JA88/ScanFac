@@ -205,9 +205,10 @@ function renderPeriodFilter() {
   fromMonth.value = monthRange.from; toMonth.value = monthRange.to;
 }
 function renderMonthFilter() {
-  const year = (dateInput.value || currentMonthValue()).slice(0, 4);
-  const allMonthsOfYear = monthLabels.map((_, index) => `${year}-${String(index + 1).padStart(2, "0")}`);
-  const months = [...new Set([...allMonthsOfYear, ...expenses.map(expense => expense.date)])].sort();
+  // Le filtre ne propose que les mois réellement présents dans la comptabilité
+  // ouverte : on évite ainsi de laisser croire que des mois vides contiennent
+  // des dépenses.
+  const months = [...new Set(expenses.map(expense => expense.date).filter(Boolean))].sort();
   if (!months.includes(monthFilterState.value)) monthFilterState.value = "";
   monthOperator.value = monthFilterState.operator;
   monthFilter.innerHTML = `<option value="">Tous</option>${months.map(month => `<option value="${month}">${monthName(month)}</option>`).join("")}`;
