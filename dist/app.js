@@ -108,6 +108,7 @@ function masterSequences(backup, items) {
 function safeFileName(value) { return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/gi, "-").replace(/(^-|-$)/g, "").toLowerCase() || "sauvegarde"; }
 function newMaster() { return { format: "scanfac-master", version: 2, ownerName: personName, updatedAt: new Date().toISOString(), expenseTypes: cloneExpenseTypes(expenseTypes), bundles: [] }; }
 function masterFileName() { return `scanfac-${safeFileName(masterBackup.ownerName || personName)}.json`; }
+function backupFileName() { const stamp = new Date().toISOString().replace(/[-:TZ.]/g, "").slice(0, 14); return `scanfac-${safeFileName(personName || masterBackup?.ownerName || "frais")}-copie-secours-${stamp}.json`; }
 function csvFileName() { return `scanfac-${safeFileName(personName || masterBackup?.ownerName || "frais")}-comptable.csv`; }
 function downloadFile(content, type, name) { const blob = new Blob([content], { type }), link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = name; link.click(); URL.revokeObjectURL(link.href); }
 function folderDb() { return new Promise((resolve, reject) => { const request = indexedDB.open("scanfac-local", 1); request.onupgradeneeded = () => request.result.createObjectStore("handles"); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); }); }
@@ -134,7 +135,7 @@ async function refreshMasterList(folder = dataFolderHandle) {
   try {
     if (!folder || await folder.queryPermission({ mode: "read" }) !== "granted") { masterSelect.disabled = true; return; }
     const names = [];
-    for await (const [name, handle] of folder.entries()) if (handle.kind === "file" && /^scanfac-(?!parametres\.json$|baremes\.json$).+\.json$/i.test(name)) names.push(name);
+    for await (const [name, handle] of folder.entries()) if (handle.kind === "file" && /^scanfac-(?!parametres\.json$|baremes\.json$)(?!.*-copie-secours-).+\.json$/i.test(name)) names.push(name);
     names.sort((a, b) => a.localeCompare(b, "fr"));
     masterSelect.innerHTML = `<option value="">Fichiers enregistrés</option>${names.map(name => `<option value="${escapeHtml(name)}">${escapeHtml(name.replace(/^scanfac-|\.json$/gi, ""))}</option>`).join("")}`;
     masterSelect.disabled = names.length === 0;
@@ -150,8 +151,8 @@ async function loadMileageParameters(folder) {
   } catch { /* Les valeurs intégrées restent utilisées tant que les paramètres ne sont pas disponibles. */ }
   updateExpenseInputMode();
 }
-async function exportJson() { const content = JSON.stringify(masterBackup, null, 2); if (dataFolderHandle && await canWriteFolder(dataFolderHandle, true)) { await writeToFolder(masterFileName(), content, "application/json"); return true; } downloadFile(content, "application/json", masterFileName()); return true; }
-function downloadJson() { downloadFile(JSON.stringify(masterBackup, null, 2), "application/json", masterFileName()); }
+async function exportJson() { const content = JSON.stringify(masterBackup, null, 2), fileName = backupFileName(); if (dataFolderHandle && await canWriteFolder(dataFolderHandle, true)) { await writeToFolder(fileName, content, "application/json"); return true; } downloadFile(content, "application/json", fileName); return true; }
+function downloadJson() { downloadFile(JSON.stringify(masterBackup, null, 2), "application/json", backupFileName()); }
 async function saveMaster() {
   masterBackup.updatedAt = new Date().toISOString();
   if (!dataFolderHandle && "showDirectoryPicker" in window && !await chooseDataFolder()) return false;
@@ -439,5 +440,5 @@ document.querySelector("#restoreInput").addEventListener("change", async event =
 });
 storedFolder().then(async handle => { if (!handle) return; dataFolderHandle = handle; if (await canWriteFolder(handle)) { await loadMileageParameters(handle); await refreshMasterList(handle); } });
 window.addEventListener("beforeunload", event => { if (!hasUnsavedChanges) return; event.preventDefault(); event.returnValue = ""; });
-if ("serviceWorker" in navigator && location.protocol !== "file:") window.addEventListener("load", () => navigator.serviceWorker.register("service-worker.js?v=5").catch(() => {}));
+if ("serviceWorker" in navigator && location.protocol !== "file:") window.addEventListener("load", () => navigator.serviceWorker.register("service-worker.js?v=6").catch(() => {}));
 renderPerson(); renderMonthOptions(); dateInput.value = currentMonthValue(); renderNatureList(); updateExpenseInputMode(); render();
