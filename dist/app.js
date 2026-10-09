@@ -273,7 +273,7 @@ function render() {
   renderMonthFilter();
   const rows = sortedFilteredExpenses();
   document.querySelector("#expenseCount").textContent = `${expenses.length} dépense${expenses.length > 1 ? "s" : ""}`;
-  body.innerHTML = rows.map(e => { const route = needsRouteFields(e.label), direction = e.routeDirection || "↔"; return `<tr data-id="${e.id}"><td><strong class="order-number">${escapeHtml(e.order)}</strong></td><td><select class="cell-select" data-field="label" aria-label="Libellé">${labelOptions(e.label)}</select></td><td><input class="cell-input amount" data-field="amount" inputmode="decimal" value="${escapeHtml(e.amount)}" aria-label="Montant TTC" ${e.label === "Kilométrage" ? "readonly title=\"Montant calculé à partir des kilomètres\"" : ""} /></td><td>${route ? `<input class="cell-input route-input" data-field="departure" value="${escapeHtml(e.departure || "")}" placeholder="Départ" aria-label="Départ" list="knownPlaces" />` : ""}</td><td>${route ? `<select class="cell-select direction-select" data-field="routeDirection" aria-label="Sens du trajet"><option value="→" ${direction === "→" ? "selected" : ""}>⟶</option><option value="↔" ${direction === "↔" ? "selected" : ""}>⟷</option></select>` : ""}</td><td>${route ? `<input class="cell-input route-input" data-field="arrival" value="${escapeHtml(e.arrival || "")}" placeholder="Arrivée" aria-label="Arrivée" list="knownPlaces" />` : ""}</td><td>${e.label === "Kilométrage" ? `<input class="cell-input kilometer-recap" value="${escapeHtml(e.kilometres ?? "")} km" aria-label="Kilomètres" readonly />` : ""}</td><td><button class="delete-button" data-action="delete" aria-label="Supprimer ${escapeHtml(e.order)}" title="Supprimer">×</button></td></tr>`; }).join("");
+  body.innerHTML = rows.map(e => { const route = needsRouteFields(e.label), direction = e.routeDirection || "↔"; const firstField = route ? `<input class="cell-input route-input" data-field="departure" value="${escapeHtml(e.departure || "")}" placeholder="Départ" aria-label="Départ" list="knownPlaces" />` : `<input class="cell-input observations-input" data-field="observations" value="${escapeHtml(e.observations || "")}" aria-label="Observations" />`; return `<tr data-id="${e.id}"><td><strong class="order-number">${escapeHtml(e.order)}</strong></td><td><select class="cell-select" data-field="label" aria-label="Libellé">${labelOptions(e.label)}</select></td><td><input class="cell-input amount" data-field="amount" inputmode="decimal" value="${escapeHtml(e.amount)}" aria-label="Montant TTC" ${e.label === "Kilométrage" ? "readonly title=\"Montant calculé à partir des kilomètres\"" : ""} /></td><td>${firstField}</td><td>${route ? `<select class="cell-select direction-select" data-field="routeDirection" aria-label="Sens du trajet"><option value="→" ${direction === "→" ? "selected" : ""}>⟶</option><option value="↔" ${direction === "↔" ? "selected" : ""}>⟷</option></select>` : ""}</td><td>${route ? `<input class="cell-input route-input" data-field="arrival" value="${escapeHtml(e.arrival || "")}" placeholder="Arrivée" aria-label="Arrivée" list="knownPlaces" />` : ""}</td><td>${e.label === "Kilométrage" ? `<input class="cell-input kilometer-recap" value="${escapeHtml(e.kilometres ?? "")} km" aria-label="Kilomètres" readonly />` : ""}</td><td><button class="delete-button" data-action="delete" aria-label="Supprimer ${escapeHtml(e.order)}" title="Supprimer">×</button></td></tr>`; }).join("");
   if (emptyState) emptyState.hidden = rows.length !== 0; renderTotals(); renderPeriodFilter();
 }
 function getExpense(id) { return expenses.find(e => e.id === id); }
@@ -359,7 +359,7 @@ function csvTotals(expensesToSummarize) {
   return { total, kilometres, totalsByLabel };
 }
 async function exportCsv() {
-  const headers = ["N° d’ordre", "Mois de saisie", "Libellé", "N° compte comptable", "Montant TTC", "Départ", "Sens", "Arrivée", "Kilomètres"];
+  const headers = ["N° d’ordre", "Mois de saisie", "Libellé", "N° compte comptable", "Montant TTC", "Départ / observations", "Sens", "Arrivée", "Kilomètres"];
   const byMonthThenDate = expenses.filter(isInSelectedPeriod).sort((a, b) => a.date.localeCompare(b.date) || a.order.localeCompare(b.order, "fr", { numeric: true }));
   const { total, kilometres, totalsByLabel } = csvTotals(byMonthThenDate);
   const summaryRows = [
@@ -368,13 +368,24 @@ async function exportCsv() {
     ["Total général", "", "", "", total.toFixed(2).replace(".", ","), "", "", "", kilometres || ""],
     ...[...totalsByLabel.entries()].map(([label, amount]) => [`Total ${label}`, "", "", "", amount.toFixed(2).replace(".", ","), "", "", "", ""])
   ];
-  const csv = [headers, ...byMonthThenDate.map(e => [e.order, e.date, e.label, e.account, e.amount, e.departure, e.routeDirection, e.arrival, e.kilometres]), ...summaryRows].map(row => row.map(csvValue).join(";")).join("\r\n");
+  const csv = [headers, ...byMonthThenDate.map(e => [e.order, e.date, e.label, e.account, e.amount, e.departure || e.observations, e.routeDirection, e.arrival, e.kilometres]), ...summaryRows].map(row => row.map(csvValue).join(";")).join("\r\n");
   const content = "\uFEFF" + csv;
   if (dataFolderHandle && await canWriteFolder(dataFolderHandle, true)) {
     try { await writeToFolder(csvFileName(), content, "text/csv;charset=utf-8"); } catch { alert("Impossible d’écrire le CSV dans le dossier choisi."); }
   } else downloadFile(content, "text/csv;charset=utf-8", csvFileName());
 }
-document.querySelector("#exportButton").addEventListener("click", exportCsv);
+document.querySelector("#exportButton").addEventListener("click", async event => {
+  const button = event.currentTarget;
+  if (button.disabled) return;
+  const initialText = button.textContent;
+  button.disabled = true;
+  button.classList.add("is-exporting");
+  button.setAttribute("aria-busy", "true");
+  button.textContent = "Exportation…";
+  const startedAt = performance.now();
+  try { await exportCsv(); const remaining = 500 - (performance.now() - startedAt); if (remaining > 0) await new Promise(resolve => setTimeout(resolve, remaining)); }
+  finally { button.disabled = false; button.classList.remove("is-exporting"); button.removeAttribute("aria-busy"); button.textContent = initialText; }
+});
 document.querySelector("#sendEmailButton").addEventListener("click", async () => {
   const email = document.querySelector("#accountantEmail");
   if (!email.checkValidity()) { email.reportValidity(); return; }
@@ -463,5 +474,5 @@ document.querySelector("#restoreInput").addEventListener("change", async event =
 });
 storedFolder().then(async handle => { if (!handle) return; dataFolderHandle = handle; renderFolderButton(); if (await canWriteFolder(handle)) { await loadMileageParameters(handle); await refreshMasterList(handle); } });
 window.addEventListener("beforeunload", event => { if (!hasUnsavedChanges) return; event.preventDefault(); event.returnValue = ""; });
-if ("serviceWorker" in navigator && location.protocol !== "file:") window.addEventListener("load", () => navigator.serviceWorker.register("service-worker.js?v=9").catch(() => {}));
+if ("serviceWorker" in navigator && location.protocol !== "file:") window.addEventListener("load", () => navigator.serviceWorker.register("service-worker.js?v=10").catch(() => {}));
 renderPerson(); renderMonthOptions(); dateInput.value = currentMonthValue(); renderNatureList(); updateExpenseInputMode(); render();
