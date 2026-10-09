@@ -37,6 +37,14 @@ const expenseTypeList = document.querySelector("#expenseTypeList");
 const expenseTypeName = document.querySelector("#expenseTypeName");
 const expenseTypeAccount = document.querySelector("#expenseTypeAccount");
 const guideDialog = document.querySelector("#guideDialog");
+const hoverTips = {
+  backupButton: "Enregistre les dépenses et les paramètres dans le dossier de travail.",
+  exportJsonButton: "Crée une copie de secours complète au format JSON dans le dossier de travail.",
+  accountantButton: "Prépare l’export comptable et permet de choisir la période.",
+  openMasterButton: "Ouvre un fichier maître ScanFac existant.",
+  folderButton: "Choisit le dossier où ScanFac enregistre les fichiers."
+};
+Object.entries(hoverTips).forEach(([id, text]) => { const element = document.querySelector(`#${id}`); if (element) element.dataset.tooltip = text; });
 const fromMonth = document.querySelector("#fromMonth");
 const toMonth = document.querySelector("#toMonth");
 const periodFilter = document.querySelector("#periodFilter");
