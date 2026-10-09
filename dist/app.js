@@ -44,7 +44,7 @@ const hoverTips = {
   openMasterButton: "Ouvre un fichier maître ScanFac existant.",
   folderButton: "Choisit le dossier où ScanFac enregistre les fichiers."
 };
-Object.entries(hoverTips).forEach(([id, text]) => { const element = document.querySelector(`#${id}`); if (element) element.dataset.tooltip = text; });
+Object.entries(hoverTips).forEach(([id, text]) => { const element = document.querySelector(`#${id}`); if (element) { element.dataset.tooltip = text; element.removeAttribute("title"); } });
 const fromMonth = document.querySelector("#fromMonth");
 const toMonth = document.querySelector("#toMonth");
 const periodFilter = document.querySelector("#periodFilter");
@@ -439,5 +439,5 @@ document.querySelector("#restoreInput").addEventListener("change", async event =
 });
 storedFolder().then(async handle => { if (!handle) return; dataFolderHandle = handle; if (await canWriteFolder(handle)) { await loadMileageParameters(handle); await refreshMasterList(handle); } });
 window.addEventListener("beforeunload", event => { if (!hasUnsavedChanges) return; event.preventDefault(); event.returnValue = ""; });
-if ("serviceWorker" in navigator && location.protocol !== "file:") window.addEventListener("load", () => navigator.serviceWorker.register("service-worker.js?v=4").catch(() => {}));
+if ("serviceWorker" in navigator && location.protocol !== "file:") window.addEventListener("load", () => navigator.serviceWorker.register("service-worker.js?v=5").catch(() => {}));
 renderPerson(); renderMonthOptions(); dateInput.value = currentMonthValue(); renderNatureList(); updateExpenseInputMode(); render();
