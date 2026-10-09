@@ -1,5 +1,6 @@
 window.SCANFAC_PARAMETERS_DEFAULT = {
   format: "scanfac-parametres",
+  accountantEmail: "",
   activePowerIndex: 0,
   kilometrage: [
     { puissance: "3 CV et moins", jusqua5000: "0,529", coefficient: "0,316", constante: "1065", auDela20000: "0,370" },

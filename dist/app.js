@@ -1,5 +1,5 @@
 // Liste facilement adaptable lorsque les comptes seront définis avec le comptable.
-const expenseTypes = [
+const defaultExpenseTypes = [
   { label: "Restaurant", account: "" }, { label: "Parking", account: "" },
   { label: "Autoroute", account: "" }, { label: "Tramway", account: "" },
   { label: "Taxi", account: "" }, { label: "Hôtel", account: "" },
@@ -7,6 +7,7 @@ const expenseTypes = [
   { label: "Téléphone", account: "" }, { label: "Kilométrage", account: "" },
   { label: "Postage", account: "" }, { label: "Divers", account: "" }
 ];
+let expenseTypes = defaultExpenseTypes.map(type => ({ ...type }));
 const monthLabels = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"];
 // Chaque personne possède une liste continue de dépenses dans son fichier JSON.
 let expenses = [];
@@ -31,6 +32,11 @@ const amountLabel = document.querySelector("#amountLabel");
 const knownPlaces = document.querySelector("#knownPlaces");
 const unsavedNotice = document.querySelector("#unsavedNotice");
 const sortDialog = document.querySelector("#sortDialog");
+const expenseTypesDialog = document.querySelector("#expenseTypesDialog");
+const expenseTypeList = document.querySelector("#expenseTypeList");
+const expenseTypeName = document.querySelector("#expenseTypeName");
+const expenseTypeAccount = document.querySelector("#expenseTypeAccount");
+const guideDialog = document.querySelector("#guideDialog");
 const fromMonth = document.querySelector("#fromMonth");
 const toMonth = document.querySelector("#toMonth");
 const periodFilter = document.querySelector("#periodFilter");
@@ -39,6 +45,7 @@ const monthFilter = document.querySelector("#monthFilter");
 const personInput = document.querySelector("#personName");
 const masterSelect = document.querySelector("#masterSelect");
 function renderPerson() { personInput.textContent = personName; }
+document.querySelector("#guideButton").addEventListener("click", () => guideDialog.showModal());
 function markUnsaved() { hasUnsavedChanges = true; unsavedNotice.hidden = false; }
 function markSaved() { hasUnsavedChanges = false; unsavedNotice.hidden = true; }
 function currentMonthValue() { return new Date().toLocaleDateString("en-CA").slice(0, 7); }
@@ -76,6 +83,8 @@ function nextOrder(date) {
   return `${month}-${String(sequences[month]).padStart(3, "0")}`;
 }
 function normalizedExpenses(items) { return items.map(expense => ({ ...expense, date: expense.date?.slice(0, 7) || currentMonthValue() })); }
+function validExpenseTypes(types) { return Array.isArray(types) && types.length > 0 && types.every(type => typeof type?.label === "string" && type.label.trim()) && new Set(types.map(type => type.label.trim().toLocaleLowerCase("fr-FR"))).size === types.length; }
+function cloneExpenseTypes(types = defaultExpenseTypes) { return types.map(type => ({ label: type.label.trim(), account: String(type.account || "").trim() })); }
 function validMaster(backup) { return backup?.format === "scanfac-master" && Array.isArray(backup.bundles); }
 function masterExpenses(backup = masterBackup) {
   const unique = new Map();
@@ -89,7 +98,7 @@ function masterSequences(backup, items) {
   return result;
 }
 function safeFileName(value) { return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/gi, "-").replace(/(^-|-$)/g, "").toLowerCase() || "sauvegarde"; }
-function newMaster() { return { format: "scanfac-master", version: 1, ownerName: personName, updatedAt: new Date().toISOString(), bundles: [] }; }
+function newMaster() { return { format: "scanfac-master", version: 2, ownerName: personName, updatedAt: new Date().toISOString(), expenseTypes: cloneExpenseTypes(expenseTypes), bundles: [] }; }
 function masterFileName() { return `scanfac-${safeFileName(masterBackup.ownerName || personName)}.json`; }
 function csvFileName() { return `scanfac-${safeFileName(personName || masterBackup?.ownerName || "frais")}-comptable.csv`; }
 function downloadFile(content, type, name) { const blob = new Blob([content], { type }), link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = name; link.click(); URL.revokeObjectURL(link.href); }
@@ -129,7 +138,7 @@ async function loadMileageParameters(folder) {
     if (!folder || await folder.queryPermission({ mode: "read" }) !== "granted") return;
     const file = await folder.getFileHandle("scanfac-parametres.json");
     const data = JSON.parse(await (await file.getFile()).text());
-    if (data?.format === "scanfac-parametres" && Array.isArray(data.kilometrage)) mileageParameters = data;
+    if (data?.format === "scanfac-parametres" && Array.isArray(data.kilometrage)) { mileageParameters = data; document.querySelector("#accountantEmail").value = data.accountantEmail || ""; }
   } catch { /* Les valeurs intégrées restent utilisées tant que les paramètres ne sont pas disponibles. */ }
   updateExpenseInputMode();
 }
@@ -173,9 +182,9 @@ async function applyMasterFile(file, handle = null) {
   const backup = JSON.parse(await file.text());
   if (!validMaster(backup)) throw new Error("invalid");
   masterBackup = backup; masterFileHandle = handle; personName = backup.ownerName || "";
-  expenses = masterExpenses(backup); sequences = masterSequences(backup, expenses);
+  expenses = masterExpenses(backup); sequences = masterSequences(backup, expenses); expenseTypes = validExpenseTypes(backup.expenseTypes) ? cloneExpenseTypes(backup.expenseTypes) : cloneExpenseTypes(); selectedLabel = "";
   monthRange = { from: "", to: "" }; monthFilterState = { operator: "=", value: "" }; accountantMode = false;
-  markSaved(); renderPerson(); render();
+  markSaved(); renderPerson(); renderNatureList(); render();
 }
 function isInSelectedPeriod(expense) { return !accountantMode || ((!monthRange.from || expense.date >= monthRange.from) && (!monthRange.to || expense.date <= monthRange.to)); }
 function matchesMonthFilter(expense) {
@@ -218,6 +227,14 @@ function labelOptions(value) { return expenseTypes.map(type => `<option value="$
 function renderNatureList() {
   document.querySelector("#natureList").innerHTML = expenseTypes.map(type => `<button type="button" class="nature-button ${type.label === selectedLabel ? "selected" : ""}" data-label="${escapeHtml(type.label)}">${escapeHtml(type.label)}</button>`).join("");
 }
+function renderExpenseTypeList() {
+  expenseTypeList.innerHTML = expenseTypes.map(type => {
+    const used = expenses.some(expense => expense.label === type.label);
+    const disabled = used || expenseTypes.length === 1;
+    const title = used ? "Cette nature est déjà utilisée" : "Conservez au moins une nature de frais";
+    return `<div class="expense-type-row"><span><b>${escapeHtml(type.label)}</b>${type.account ? ` <small>Compte ${escapeHtml(type.account)}</small>` : ""}</span><button class="delete-expense-type" type="button" data-delete-expense-type="${escapeHtml(type.label)}" ${disabled ? `disabled title="${title}"` : ""}>Supprimer</button></div>`;
+  }).join("");
+}
 function renderTotals() {
   const periodExpenses = expenses.filter(expense => isInSelectedPeriod(expense) && matchesMonthFilter(expense));
   const total = periodExpenses.reduce((sum, expense) => sum + amountNumber(expense.amount), 0);
@@ -251,6 +268,25 @@ function updateExpense(expense, field, value) {
   else expense[field] = value;
   return true;
 }
+document.querySelector("#manageExpenseTypesButton").addEventListener("click", () => { renderExpenseTypeList(); expenseTypeName.value = ""; expenseTypeAccount.value = ""; expenseTypesDialog.showModal(); expenseTypeName.focus(); });
+document.querySelector("#addExpenseTypeButton").addEventListener("click", () => {
+  const label = expenseTypeName.value.trim().replace(/\s+/g, " ");
+  if (!label) { alert("Indiquez le nom de la nature de frais."); expenseTypeName.focus(); return; }
+  if (expenseTypes.some(type => type.label.localeCompare(label, "fr", { sensitivity: "accent" }) === 0)) { alert("Cette nature de frais existe déjà."); expenseTypeName.focus(); return; }
+  expenseTypes.push({ label, account: expenseTypeAccount.value.trim() });
+  markUnsaved(); renderNatureList(); renderExpenseTypeList(); expenseTypeName.value = ""; expenseTypeAccount.value = ""; expenseTypeName.focus();
+});
+[expenseTypeName, expenseTypeAccount].forEach(input => input.addEventListener("keydown", event => {
+  if (event.key === "Enter") { event.preventDefault(); document.querySelector("#addExpenseTypeButton").click(); }
+}));
+expenseTypeList.addEventListener("click", event => {
+  const button = event.target.closest("[data-delete-expense-type]"); if (!button || button.disabled) return;
+  const label = button.dataset.deleteExpenseType;
+  if (expenses.some(expense => expense.label === label) || expenseTypes.length === 1) return;
+  expenseTypes = expenseTypes.filter(type => type.label !== label);
+  if (selectedLabel === label) { selectedLabel = ""; updateExpenseInputMode(); }
+  markUnsaved(); renderNatureList(); renderExpenseTypeList();
+});
 document.querySelector("#natureList").addEventListener("click", event => {
   const button = event.target.closest("[data-label]"); if (!button) return;
   selectedLabel = button.dataset.label; renderNatureList(); updateExpenseInputMode(); amountInput.focus();
@@ -290,10 +326,24 @@ sortRulesEl.addEventListener("change", event => { const index = event.target.dat
 sortRulesEl.addEventListener("click", event => { const index = event.target.dataset.removeRule; if (index !== undefined && sortRules.length > 1) { sortRules.splice(index, 1); renderSortRules(); } });
 document.querySelector("#applySort").addEventListener("click", render);
 function csvValue(value) { return `"${String(value ?? "").replaceAll('"', '""')}"`; }
+function csvTotals(expensesToSummarize) {
+  const total = expensesToSummarize.reduce((sum, expense) => sum + amountNumber(expense.amount), 0);
+  const kilometres = expensesToSummarize.filter(expense => expense.label === "Kilométrage").reduce((sum, expense) => sum + amountNumber(expense.kilometres || 0), 0);
+  const totalsByLabel = new Map();
+  expensesToSummarize.forEach(expense => totalsByLabel.set(expense.label, (totalsByLabel.get(expense.label) || 0) + amountNumber(expense.amount)));
+  return { total, kilometres, totalsByLabel };
+}
 async function exportCsv() {
   const headers = ["N° d’ordre", "Mois de saisie", "Libellé", "N° compte comptable", "Montant TTC", "Départ", "Sens", "Arrivée", "Kilomètres"];
   const byMonthThenDate = expenses.filter(isInSelectedPeriod).sort((a, b) => a.date.localeCompare(b.date) || a.order.localeCompare(b.order, "fr", { numeric: true }));
-  const csv = [headers, ...byMonthThenDate.map(e => [e.order, e.date, e.label, e.account, e.amount, e.departure, e.routeDirection, e.arrival, e.kilometres])].map(row => row.map(csvValue).join(";")).join("\r\n");
+  const { total, kilometres, totalsByLabel } = csvTotals(byMonthThenDate);
+  const summaryRows = [
+    [],
+    ["Récapitulatif", "", "", "", "Montant TTC", "", "", "", "Kilomètres"],
+    ["Total général", "", "", "", total.toFixed(2).replace(".", ","), "", "", "", kilometres || ""],
+    ...[...totalsByLabel.entries()].map(([label, amount]) => [`Total ${label}`, "", "", "", amount.toFixed(2).replace(".", ","), "", "", "", ""])
+  ];
+  const csv = [headers, ...byMonthThenDate.map(e => [e.order, e.date, e.label, e.account, e.amount, e.departure, e.routeDirection, e.arrival, e.kilometres]), ...summaryRows].map(row => row.map(csvValue).join(";")).join("\r\n");
   const content = "\uFEFF" + csv;
   if (dataFolderHandle && await canWriteFolder(dataFolderHandle, true)) {
     try { await writeToFolder(csvFileName(), content, "text/csv;charset=utf-8"); } catch { alert("Impossible d’écrire le CSV dans le dossier choisi."); }
@@ -309,11 +359,12 @@ document.querySelector("#sendEmailButton").addEventListener("click", async () =>
   void exportCsv();
 });
 document.querySelector("#backupButton").addEventListener("click", async () => {
-  if (!expenses.length) { alert("Ajoutez au moins une dépense avant de sauvegarder."); return; }
+  if (!expenses.length && !hasUnsavedChanges) { alert("Ajoutez une dépense ou modifiez les natures de frais avant de sauvegarder."); return; }
   if (!personName) { alert("Choisissez d’abord « Nouveau nom » ou restaurez un fichier maître."); return; }
   if (masterBackup && masterBackup.ownerName && masterBackup.ownerName !== personName) { alert("Cliquez sur « Nouvelle personne » avant de commencer une comptabilité différente."); return; }
   if (!masterBackup) masterBackup = newMaster();
   masterBackup.ownerName = personName;
+  masterBackup.expenseTypes = cloneExpenseTypes(expenseTypes);
   // Les anciens fichiers à plusieurs liasses sont conservés à la lecture, puis
   // réunis en une seule liste continue lors de leur prochaine sauvegarde.
   masterBackup.bundles = [{ id: masterBackup.bundles[0]?.id || crypto.randomUUID(), savedAt: new Date().toISOString(), expenses, sequences }];
@@ -323,7 +374,7 @@ document.querySelector("#newPersonButton").addEventListener("click", () => {
   const nextName = prompt("Nom de la personne :")?.trim();
   if (!nextName) return;
   if (!confirm(`Commencer une nouvelle comptabilité pour « ${nextName} » ? La liste affichée sera vidée, sans supprimer les fichiers JSON existants.`)) return;
-  personName = nextName; masterBackup = null; masterFileHandle = null; expenses = []; sequences = {}; monthRange = { from: "", to: "" }; monthFilterState = { operator: "=", value: "" }; accountantMode = false; markSaved(); renderPerson(); render(); amountInput.focus();
+  personName = nextName; masterBackup = null; masterFileHandle = null; expenses = []; sequences = {}; expenseTypes = cloneExpenseTypes(); monthRange = { from: "", to: "" }; monthFilterState = { operator: "=", value: "" }; accountantMode = false; markSaved(); renderPerson(); renderNatureList(); render(); amountInput.focus();
 });
 document.querySelector("#newExpenseButton").addEventListener("click", () => {
   selectedLabel = ""; dateInput.value = currentMonthValue(); amountInput.value = "";
@@ -350,6 +401,27 @@ document.querySelector("#exportJsonButton").addEventListener("click", async () =
   try { await exportJson(); } catch { alert("Impossible d’exporter le fichier JSON."); }
 });
 document.querySelector("#folderButton").addEventListener("click", async () => { if (!dataFolderHandle || !await activateFolder(dataFolderHandle)) await chooseDataFolder(); });
+document.querySelector("#updateAppButton").addEventListener("click", async event => {
+  if (hasUnsavedChanges) { alert("Sauvegardez d’abord vos modifications avant d’actualiser l’application."); return; }
+  const button = event.currentTarget;
+  const initialText = button.textContent;
+  button.disabled = true;
+  button.textContent = "Actualisation…";
+  try {
+    if (!("serviceWorker" in navigator) || location.protocol === "file:") { window.location.reload(); return; }
+    const registration = await navigator.serviceWorker.getRegistration();
+    if (!registration?.active) { window.location.reload(); return; }
+    await registration.update();
+    const channel = new MessageChannel();
+    const fallbackReload = window.setTimeout(() => window.location.reload(), 5000);
+    channel.port1.onmessage = () => { window.clearTimeout(fallbackReload); window.location.reload(); };
+    registration.active.postMessage({ type: "scanfac-refresh-cache" }, [channel.port2]);
+  } catch {
+    window.location.reload();
+  } finally {
+    window.setTimeout(() => { button.disabled = false; button.textContent = initialText; }, 1500);
+  }
+});
 document.querySelector("#restoreInput").addEventListener("change", async event => {
   const file = event.target.files?.[0]; event.target.value = "";
   if (!file) return;

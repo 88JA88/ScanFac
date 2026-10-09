@@ -2,10 +2,12 @@ let parameters = JSON.parse(JSON.stringify(window.SCANFAC_PARAMETERS_DEFAULT));
 let loadedFromFile = false;
 const body = document.querySelector("#kilometrageBody");
 const status = document.querySelector("#saveStatus");
+const accountantEmailInput = document.querySelector("#accountantEmailSetting");
 const fields = ["puissance", "jusqua5000", "coefficient", "constante", "auDela20000"];
 const escapeHtml = value => String(value ?? "").replace(/[&<>'"]/g, char => ({ "&":"&amp;", "<":"&gt;", ">":"&gt;", "'":"&#39;", '"':"&quot;" })[char]);
 
 function render() {
+  accountantEmailInput.value = parameters.accountantEmail || "";
   body.innerHTML = parameters.kilometrage.map((row, index) => `<tr><td><input class="active-power" type="radio" name="activePower" value="${index}" ${index === Number(parameters.activePowerIndex || 0) ? "checked" : ""} aria-label="Utiliser ${escapeHtml(row.puissance)}" /></td>${fields.map(field => `<td><input data-row="${index}" data-field="${field}" value="${escapeHtml(row[field])}" aria-label="${field}" /></td>`).join("")}</tr>`).join("");
 }
 function validParameters(data) { return data?.format === "scanfac-parametres" && Array.isArray(data.kilometrage); }
@@ -31,6 +33,7 @@ async function saveParameters() {
 
 body.addEventListener("input", event => { const input = event.target; if (input.dataset.row === undefined) return; parameters.kilometrage[Number(input.dataset.row)][input.dataset.field] = input.value; status.textContent = ""; });
 body.addEventListener("change", event => { const input = event.target; if (!input.matches(".active-power")) return; parameters.activePowerIndex = Number(input.value); status.textContent = ""; });
+accountantEmailInput.addEventListener("input", () => { parameters.accountantEmail = accountantEmailInput.value.trim(); status.textContent = ""; });
 document.querySelector("#saveParameters").addEventListener("click", saveParameters);
 document.querySelector("#restoreDefaults").addEventListener("click", () => { if (!confirm("Rétablir les valeurs par défaut ? Les modifications non enregistrées seront perdues.")) return; parameters = JSON.parse(JSON.stringify(window.SCANFAC_PARAMETERS_DEFAULT)); render(); status.textContent = "Valeurs par défaut rétablies."; });
 render(); loadSavedParameters();
