@@ -247,7 +247,7 @@ function renderExpenseTypeList() {
     const used = expenses.some(expense => expense.label === type.label);
     const disabled = used || expenseTypes.length === 1;
     const title = used ? "Cette nature est déjà utilisée" : "Conservez au moins une nature de frais";
-    return `<div class="expense-type-row"><span><b>${escapeHtml(type.label)}</b>${type.account ? ` <small>Compte ${escapeHtml(type.account)}</small>` : ""}</span><button class="delete-expense-type" type="button" data-delete-expense-type="${escapeHtml(type.label)}" ${disabled ? `disabled title="${title}"` : ""}>Supprimer</button></div>`;
+    return `<div class="expense-type-row"><b>${escapeHtml(type.label)}</b><label class="expense-type-account-field"><span>N° de compte</span><input class="expense-type-account-input" type="text" maxlength="30" value="${escapeHtml(type.account)}" data-expense-type-account="${escapeHtml(type.label)}" aria-label="N° de compte pour ${escapeHtml(type.label)}" placeholder="Facultatif" /></label><button class="delete-expense-type" type="button" data-delete-expense-type="${escapeHtml(type.label)}" ${disabled ? `disabled title="${title}"` : ""}>Supprimer</button></div>`;
   }).join("");
 }
 function renderTotals() {
@@ -301,6 +301,16 @@ expenseTypeList.addEventListener("click", event => {
   expenseTypes = expenseTypes.filter(type => type.label !== label);
   if (selectedLabel === label) { selectedLabel = ""; updateExpenseInputMode(); }
   markUnsaved(); renderNatureList(); renderExpenseTypeList();
+});
+expenseTypeList.addEventListener("change", event => {
+  const input = event.target.closest("[data-expense-type-account]");
+  if (!input) return;
+  const label = input.dataset.expenseTypeAccount;
+  const type = expenseTypes.find(item => item.label === label);
+  if (!type) return;
+  type.account = input.value.trim();
+  expenses.forEach(expense => { if (expense.label === label) expense.account = type.account; });
+  markUnsaved();
 });
 document.querySelector("#natureList").addEventListener("click", event => {
   const button = event.target.closest("[data-label]"); if (!button) return;
@@ -449,5 +459,5 @@ document.querySelector("#restoreInput").addEventListener("change", async event =
 });
 storedFolder().then(async handle => { if (!handle) return; dataFolderHandle = handle; renderFolderButton(); if (await canWriteFolder(handle)) { await loadMileageParameters(handle); await refreshMasterList(handle); } });
 window.addEventListener("beforeunload", event => { if (!hasUnsavedChanges) return; event.preventDefault(); event.returnValue = ""; });
-if ("serviceWorker" in navigator && location.protocol !== "file:") window.addEventListener("load", () => navigator.serviceWorker.register("service-worker.js?v=7").catch(() => {}));
+if ("serviceWorker" in navigator && location.protocol !== "file:") window.addEventListener("load", () => navigator.serviceWorker.register("service-worker.js?v=8").catch(() => {}));
 renderPerson(); renderMonthOptions(); dateInput.value = currentMonthValue(); renderNatureList(); updateExpenseInputMode(); render();
