@@ -401,10 +401,14 @@ document.querySelector("#newPersonButton").addEventListener("click", () => {
   if (!confirm(`Commencer une nouvelle comptabilité pour « ${nextName} » ? La liste affichée sera vidée, sans supprimer les fichiers JSON existants.`)) return;
   personName = nextName; masterBackup = null; masterFileHandle = null; expenses = []; sequences = {}; expenseTypes = cloneExpenseTypes(); monthRange = { from: "", to: "" }; monthFilterState = { operator: "=", value: "" }; accountantMode = false; markSaved(); renderPerson(); renderNatureList(); render(); amountInput.focus();
 });
-document.querySelector("#newExpenseButton").addEventListener("click", () => {
-  selectedLabel = ""; dateInput.value = currentMonthValue(); amountInput.value = "";
-  renderNatureList(); updateExpenseInputMode(); amountInput.focus();
-});
+const newExpenseButton = document.querySelector("#newExpenseButton");
+if (newExpenseButton) {
+  newExpenseButton.closest(".entry-panel")?.setAttribute("aria-label", "Saisie des dépenses");
+  const entryTitle = document.createElement("h2");
+  entryTitle.className = "entry-title";
+  entryTitle.textContent = "Saisie des dépenses";
+  newExpenseButton.replaceWith(entryTitle);
+}
 document.querySelector("#openMasterButton").addEventListener("click", async () => {
   try {
     await restoreMaster();
@@ -459,5 +463,5 @@ document.querySelector("#restoreInput").addEventListener("change", async event =
 });
 storedFolder().then(async handle => { if (!handle) return; dataFolderHandle = handle; renderFolderButton(); if (await canWriteFolder(handle)) { await loadMileageParameters(handle); await refreshMasterList(handle); } });
 window.addEventListener("beforeunload", event => { if (!hasUnsavedChanges) return; event.preventDefault(); event.returnValue = ""; });
-if ("serviceWorker" in navigator && location.protocol !== "file:") window.addEventListener("load", () => navigator.serviceWorker.register("service-worker.js?v=8").catch(() => {}));
+if ("serviceWorker" in navigator && location.protocol !== "file:") window.addEventListener("load", () => navigator.serviceWorker.register("service-worker.js?v=9").catch(() => {}));
 renderPerson(); renderMonthOptions(); dateInput.value = currentMonthValue(); renderNatureList(); updateExpenseInputMode(); render();
