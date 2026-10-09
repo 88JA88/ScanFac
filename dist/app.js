@@ -240,7 +240,7 @@ function renderMonthFilter() {
 }
 function labelOptions(value) { return expenseTypes.map(type => `<option value="${escapeHtml(type.label)}" ${type.label === value ? "selected" : ""}>${escapeHtml(type.label)}</option>`).join(""); }
 function renderNatureList() {
-  document.querySelector("#natureList").innerHTML = expenseTypes.map(type => `<button type="button" class="nature-button ${type.label === selectedLabel ? "selected" : ""}" data-label="${escapeHtml(type.label)}">${escapeHtml(type.label)}</button>`).join("");
+  document.querySelector("#natureList").innerHTML = expenseTypes.map((type, index) => `<button type="button" class="nature-button ${type.label === selectedLabel ? "selected" : ""}" data-label="${escapeHtml(type.label)}">${escapeHtml(type.label)}</button>${(index + 1) % 10 === 0 && index < expenseTypes.length - 1 ? `<span class="nature-break" aria-hidden="true"></span>` : ""}`).join("");
 }
 function renderExpenseTypeList() {
   expenseTypeList.innerHTML = expenseTypes.map(type => {
@@ -474,5 +474,5 @@ document.querySelector("#restoreInput").addEventListener("change", async event =
 });
 storedFolder().then(async handle => { if (!handle) return; dataFolderHandle = handle; renderFolderButton(); if (await canWriteFolder(handle)) { await loadMileageParameters(handle); await refreshMasterList(handle); } });
 window.addEventListener("beforeunload", event => { if (!hasUnsavedChanges) return; event.preventDefault(); event.returnValue = ""; });
-if ("serviceWorker" in navigator && location.protocol !== "file:") window.addEventListener("load", () => navigator.serviceWorker.register("service-worker.js?v=10").catch(() => {}));
+if ("serviceWorker" in navigator && location.protocol !== "file:") window.addEventListener("load", () => navigator.serviceWorker.register("service-worker.js?v=11").catch(() => {}));
 renderPerson(); renderMonthOptions(); dateInput.value = currentMonthValue(); renderNatureList(); updateExpenseInputMode(); render();

@@ -1,7 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 
 // Incrémenter uniquement cette constante à chaque publication.
-const APP_VERSION = "10";
+const APP_VERSION = "11";
 const root = new URL("../", import.meta.url);
 const files = ["dist/index.html", "dist/baremes.html", "dist/app.js", "dist/baremes.js", "dist/service-worker.js"];
 

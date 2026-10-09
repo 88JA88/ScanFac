@@ -47,6 +47,7 @@
 .table-wrap .direction-select { width:52px; height:30px; font-size:1.05rem; }
 .table-wrap .direction-select { height:18px; font-size:.9rem; }
 .table-wrap .kilometer-recap { color:#000000; }
+.nature-break { flex-basis:100%; height:0; }
 .button.is-exporting { opacity:.7; cursor:wait; transform:none; }.button.is-exporting::after { content:""; display:inline-block; width:11px; height:11px; margin-left:7px; vertical-align:-1px; border:2px solid currentColor; border-right-color:transparent; border-radius:50%; animation:scanfac-spin .7s linear infinite; }@keyframes scanfac-spin { to { transform:rotate(360deg); } }
 .month-filter-icon { font-size:1.1rem; line-height:1; }.month-filter #monthOperator { width:48px; min-width:48px; height:30px; padding:0 3px; font-size:1.12rem; line-height:1; }
 .month-filter { min-width:250px; position:relative; overflow:visible; }.month-filter select { appearance:auto; -webkit-appearance:auto; pointer-events:auto; cursor:pointer; }.month-filter #monthFilter { display:block; width:145px; min-width:145px; flex:0 0 145px; position:relative; z-index:2; }
