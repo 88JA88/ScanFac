@@ -52,7 +52,9 @@ const monthOperator = document.querySelector("#monthOperator");
 const monthFilter = document.querySelector("#monthFilter");
 const personInput = document.querySelector("#personName");
 const masterSelect = document.querySelector("#masterSelect");
+const folderButton = document.querySelector("#folderButton");
 function renderPerson() { personInput.textContent = personName; }
+function renderFolderButton() { const name = dataFolderHandle?.name || "Dossier"; folderButton.textContent = name; folderButton.dataset.tooltip = dataFolderHandle ? `Dossier de travail sélectionné : ${name}.` : "Choisit le dossier où ScanFac enregistre les fichiers."; }
 document.querySelector("#guideButton").addEventListener("click", () => guideDialog.showModal());
 function markUnsaved() { hasUnsavedChanges = true; unsavedNotice.hidden = false; }
 function markSaved() { hasUnsavedChanges = false; unsavedNotice.hidden = true; }
@@ -120,6 +122,10 @@ async function rememberFolder(handle) {
   try { const db = await folderDb(); await new Promise((resolve, reject) => { const request = db.transaction("handles", "readwrite").objectStore("handles").put(handle, "data-folder"); request.onsuccess = () => { db.close(); resolve(); }; request.onerror = () => { db.close(); reject(request.error); }; }); }
   catch { /* Le dossier reste disponible pour cette session. */ }
 }
+async function forgetStoredFolder() {
+  try { const db = await folderDb(); await new Promise((resolve, reject) => { const request = db.transaction("handles", "readwrite").objectStore("handles").delete("data-folder"); request.onsuccess = () => { db.close(); resolve(); }; request.onerror = () => { db.close(); reject(request.error); }; }); }
+  catch { /* L’absence de permission n’empêche pas l’actualisation. */ }
+}
 async function canWriteFolder(handle, ask = false) { if (!handle) return false; const options = { mode: "readwrite" }; if (await handle.queryPermission(options) === "granted") return true; return ask && await handle.requestPermission(options) === "granted"; }
 async function chooseDataFolder() {
   if (!("showDirectoryPicker" in window)) { alert("Le choix d’un dossier est disponible dans Chrome ou Edge. Les fichiers seront téléchargés de façon classique."); return false; }
@@ -128,7 +134,7 @@ async function chooseDataFolder() {
 }
 async function activateFolder(handle) {
   if (!await canWriteFolder(handle, true)) return false;
-  dataFolderHandle = handle; await loadMileageParameters(handle); await refreshMasterList(handle); return true;
+  dataFolderHandle = handle; renderFolderButton(); await loadMileageParameters(handle); await refreshMasterList(handle); return true;
 }
 async function writeToFolder(name, content, type) { const handle = await dataFolderHandle.getFileHandle(name, { create: true }); const writable = await handle.createWritable(); await writable.write(new Blob([content], { type })); await writable.close(); }
 async function refreshMasterList(folder = dataFolderHandle) {
@@ -410,7 +416,7 @@ document.querySelector("#exportJsonButton").addEventListener("click", async () =
   try { await exportJson(); } catch { alert("Impossible de créer la copie de secours JSON."); }
 });
 document.querySelector("#exportJsonButton").title = "Crée une copie de secours complète des données au format JSON dans le dossier de travail.";
-document.querySelector("#folderButton").addEventListener("click", async () => { if (!dataFolderHandle || !await activateFolder(dataFolderHandle)) await chooseDataFolder(); });
+folderButton.addEventListener("click", async () => { if (!dataFolderHandle || !await activateFolder(dataFolderHandle)) await chooseDataFolder(); });
 document.querySelector("#updateAppButton").addEventListener("click", async event => {
   if (hasUnsavedChanges) { alert("Sauvegardez d’abord vos modifications avant d’actualiser l’application."); return; }
   const button = event.currentTarget;
@@ -418,6 +424,9 @@ document.querySelector("#updateAppButton").addEventListener("click", async event
   button.disabled = true;
   button.textContent = "Actualisation…";
   try {
+    dataFolderHandle = null;
+    await forgetStoredFolder();
+    renderFolderButton();
     if (!("serviceWorker" in navigator) || location.protocol === "file:") { window.location.reload(); return; }
     const registration = await navigator.serviceWorker.getRegistration();
     if (!registration?.active) { window.location.reload(); return; }
@@ -438,7 +447,7 @@ document.querySelector("#restoreInput").addEventListener("change", async event =
   try { await applyMasterFile(file); alert(`Fichier maître restauré : ${expenses.length} dépense(s) affichée(s).`); }
   catch { alert("Ce fichier n’est pas un fichier maître ScanFac valide."); }
 });
-storedFolder().then(async handle => { if (!handle) return; dataFolderHandle = handle; if (await canWriteFolder(handle)) { await loadMileageParameters(handle); await refreshMasterList(handle); } });
+storedFolder().then(async handle => { if (!handle) return; dataFolderHandle = handle; renderFolderButton(); if (await canWriteFolder(handle)) { await loadMileageParameters(handle); await refreshMasterList(handle); } });
 window.addEventListener("beforeunload", event => { if (!hasUnsavedChanges) return; event.preventDefault(); event.returnValue = ""; });
-if ("serviceWorker" in navigator && location.protocol !== "file:") window.addEventListener("load", () => navigator.serviceWorker.register("service-worker.js?v=6").catch(() => {}));
+if ("serviceWorker" in navigator && location.protocol !== "file:") window.addEventListener("load", () => navigator.serviceWorker.register("service-worker.js?v=7").catch(() => {}));
 renderPerson(); renderMonthOptions(); dateInput.value = currentMonthValue(); renderNatureList(); updateExpenseInputMode(); render();

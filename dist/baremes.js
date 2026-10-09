@@ -37,4 +37,4 @@ accountantEmailInput.addEventListener("input", () => { parameters.accountantEmai
 document.querySelector("#saveParameters").addEventListener("click", saveParameters);
 document.querySelector("#restoreDefaults").addEventListener("click", () => { if (!confirm("Rétablir les valeurs par défaut ? Les modifications non enregistrées seront perdues.")) return; parameters = JSON.parse(JSON.stringify(window.SCANFAC_PARAMETERS_DEFAULT)); render(); status.textContent = "Valeurs par défaut rétablies."; });
 render(); loadSavedParameters();
-if ("serviceWorker" in navigator && location.protocol !== "file:") window.addEventListener("load", () => navigator.serviceWorker.register("service-worker.js?v=6").catch(() => {}));
+if ("serviceWorker" in navigator && location.protocol !== "file:") window.addEventListener("load", () => navigator.serviceWorker.register("service-worker.js?v=7").catch(() => {}));
