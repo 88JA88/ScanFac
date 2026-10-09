@@ -431,5 +431,5 @@ document.querySelector("#restoreInput").addEventListener("change", async event =
 });
 storedFolder().then(async handle => { if (!handle) return; dataFolderHandle = handle; if (await canWriteFolder(handle)) { await loadMileageParameters(handle); await refreshMasterList(handle); } });
 window.addEventListener("beforeunload", event => { if (!hasUnsavedChanges) return; event.preventDefault(); event.returnValue = ""; });
-if ("serviceWorker" in navigator && location.protocol !== "file:") window.addEventListener("load", () => navigator.serviceWorker.register("service-worker.js").catch(() => {}));
+if ("serviceWorker" in navigator && location.protocol !== "file:") window.addEventListener("load", () => navigator.serviceWorker.register("service-worker.js?v=3").catch(() => {}));
 renderPerson(); renderMonthOptions(); dateInput.value = currentMonthValue(); renderNatureList(); updateExpenseInputMode(); render();
