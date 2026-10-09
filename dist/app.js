@@ -256,6 +256,7 @@ function renderTotals() {
   const kilometres = periodExpenses.filter(expense => expense.label === "Kilométrage").reduce((sum, expense) => sum + amountNumber(expense.kilometres || 0), 0);
   const groupByMonth = sortRules[0]?.field === "date";
   document.querySelector("#grandTotal").textContent = euro(total);
+  document.querySelector("#grandTotal").previousElementSibling.textContent = "Total :";
   document.querySelector("#kilometerTotal").textContent = kilometres ? `${new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 2 }).format(kilometres)} km` : "";
   document.querySelector("#periodLabel").textContent = `${periodExpenses.length} dépense${periodExpenses.length > 1 ? "s" : ""} enregistrée${periodExpenses.length > 1 ? "s" : ""}`;
   document.querySelector("#totalsHeading").textContent = groupByMonth ? "Totaux par mois" : "Totaux par libellé";
@@ -265,7 +266,7 @@ function renderTotals() {
     sums.set(key, (sums.get(key) || 0) + amountNumber(e.amount));
   });
   document.querySelector("#labelTotals").innerHTML = sums.size
-    ? [...sums.entries()].map(([label, total]) => `<span>${escapeHtml(label)} <b>${euro(total)}</b></span>`).join("")
+    ? [...sums.entries()].map(([label, total], index) => `<span>${escapeHtml(label)} <b>${euro(total)}</b></span>${(index + 1) % 7 === 0 && index < sums.size - 1 ? `<span class="breakdown-break" aria-hidden="true"></span>` : ""}`).join("")
     : "<span>Les totaux apparaîtront ici.</span>";
 }
 function render() {
@@ -474,5 +475,5 @@ document.querySelector("#restoreInput").addEventListener("change", async event =
 });
 storedFolder().then(async handle => { if (!handle) return; dataFolderHandle = handle; renderFolderButton(); if (await canWriteFolder(handle)) { await loadMileageParameters(handle); await refreshMasterList(handle); } });
 window.addEventListener("beforeunload", event => { if (!hasUnsavedChanges) return; event.preventDefault(); event.returnValue = ""; });
-if ("serviceWorker" in navigator && location.protocol !== "file:") window.addEventListener("load", () => navigator.serviceWorker.register("service-worker.js?v=11").catch(() => {}));
+if ("serviceWorker" in navigator && location.protocol !== "file:") window.addEventListener("load", () => navigator.serviceWorker.register("service-worker.js?v=12").catch(() => {}));
 renderPerson(); renderMonthOptions(); dateInput.value = currentMonthValue(); renderNatureList(); updateExpenseInputMode(); render();
