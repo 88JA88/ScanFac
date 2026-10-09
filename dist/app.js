@@ -398,8 +398,9 @@ document.querySelector("#accountantButton").addEventListener("click", async () =
 });
 document.querySelector("#exportJsonButton").addEventListener("click", async () => {
   if (!masterBackup) { alert("Aucun fichier maître à exporter."); return; }
-  try { await exportJson(); } catch { alert("Impossible d’exporter le fichier JSON."); }
+  try { await exportJson(); } catch { alert("Impossible de créer la copie de secours JSON."); }
 });
+document.querySelector("#exportJsonButton").title = "Crée une copie de secours complète des données au format JSON dans le dossier de travail.";
 document.querySelector("#folderButton").addEventListener("click", async () => { if (!dataFolderHandle || !await activateFolder(dataFolderHandle)) await chooseDataFolder(); });
 document.querySelector("#updateAppButton").addEventListener("click", async event => {
   if (hasUnsavedChanges) { alert("Sauvegardez d’abord vos modifications avant d’actualiser l’application."); return; }
