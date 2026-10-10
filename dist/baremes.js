@@ -50,4 +50,4 @@ document.querySelector("#chooseBackupFolder").addEventListener("click", () => ch
 document.querySelector("#chooseCsvFolder").addEventListener("click", () => chooseFolder(CSV_FOLDER_KEY, "CSV"));
 document.querySelector("#restoreDefaults").addEventListener("click", () => { if (!confirm("Rétablir les valeurs par défaut ? Les modifications non enregistrées seront perdues.")) return; parameters = JSON.parse(JSON.stringify(window.SCANFAC_PARAMETERS_DEFAULT)); render(); status.textContent = "Valeurs par défaut rétablies."; });
 render(); loadSavedParameters(); renderFolderNames();
-if ("serviceWorker" in navigator && location.protocol !== "file:") window.addEventListener("load", () => navigator.serviceWorker.register("service-worker.js?v=25").catch(() => {}));
+if ("serviceWorker" in navigator && location.protocol !== "file:") window.addEventListener("load", () => navigator.serviceWorker.register("service-worker.js?v=27").catch(() => {}));
