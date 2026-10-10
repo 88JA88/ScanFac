@@ -1,4 +1,4 @@
-const CACHE_NAME = "scanfac-static-v12";
+const CACHE_NAME = "scanfac-static-v25";
 const APP_FILES = [
   "./", "./index.html", "./baremes.html", "./styles.css", "./overrides.css", "./baremes.css",
   "./app.js", "./baremes.js", "./baremes-defaut.js", "./manifest.webmanifest",

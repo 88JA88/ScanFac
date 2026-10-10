@@ -21,6 +21,8 @@ let masterBackup = null;
 let personName = "";
 let masterFileHandle = null;
 let dataFolderHandle = null;
+let backupFolderHandle = null;
+let csvFolderHandle = null;
 let mileageParameters = JSON.parse(JSON.stringify(window.SCANFAC_PARAMETERS_DEFAULT));
 let hasUnsavedChanges = false;
 
@@ -41,8 +43,7 @@ const hoverTips = {
   backupButton: "Enregistre les dépenses et les paramètres dans le dossier de travail.",
   exportJsonButton: "Crée une copie de secours complète au format JSON dans le dossier de travail.",
   accountantButton: "Prépare l’export comptable et permet de choisir la période.",
-  openMasterButton: "Ouvre un fichier maître ScanFac existant.",
-  folderButton: "Choisit le dossier où ScanFac enregistre les fichiers."
+  openMasterButton: "Ouvre un fichier maître ScanFac existant."
 };
 Object.entries(hoverTips).forEach(([id, text]) => { const element = document.querySelector(`#${id}`); if (element) { element.dataset.tooltip = text; element.removeAttribute("title"); } });
 const fromMonth = document.querySelector("#fromMonth");
@@ -50,11 +51,15 @@ const toMonth = document.querySelector("#toMonth");
 const periodFilter = document.querySelector("#periodFilter");
 const monthOperator = document.querySelector("#monthOperator");
 const monthFilter = document.querySelector("#monthFilter");
-const personInput = document.querySelector("#personName");
 const masterSelect = document.querySelector("#masterSelect");
-const folderButton = document.querySelector("#folderButton");
-function renderPerson() { personInput.textContent = personName; }
-function renderFolderButton() { const name = dataFolderHandle?.name || "Dossier"; folderButton.textContent = name; folderButton.dataset.tooltip = dataFolderHandle ? `Dossier de travail sélectionné : ${name}.` : "Choisit le dossier où ScanFac enregistre les fichiers."; }
+const masterSelectText = document.querySelector("#masterSelectText");
+const folderSummary = document.querySelector("#folderSummary");
+const WORK_FOLDER_KEY = "data-folder";
+const BACKUP_FOLDER_KEY = "backup-folder";
+const CSV_FOLDER_KEY = "csv-folder";
+function masterSelectLabel() { return personName || "Fichiers enregistrés"; }
+function renderPerson() { const label = masterSelectLabel(), firstOption = masterSelect.querySelector('option[value=""]'); if (firstOption) firstOption.textContent = label; masterSelectText.textContent = label; }
+function renderFolderSummary() { const workName = dataFolderHandle?.name || "non sélectionné", backupName = backupFolderHandle?.name || "non sélectionné", csvName = csvFolderHandle?.name || "non sélectionné"; folderSummary.textContent = `Dossiers — Travail : ${workName} · Sauvegardes : ${backupName} · CSV : ${csvName}`; }
 document.querySelector("#guideButton").addEventListener("click", () => guideDialog.showModal());
 function markUnsaved() { hasUnsavedChanges = true; unsavedNotice.hidden = false; }
 function markSaved() { hasUnsavedChanges = false; unsavedNotice.hidden = true; }
@@ -114,12 +119,13 @@ function backupFileName() { const stamp = new Date().toISOString().replace(/[-:T
 function csvFileName() { return `scanfac-${safeFileName(personName || masterBackup?.ownerName || "frais")}-comptable.csv`; }
 function downloadFile(content, type, name) { const blob = new Blob([content], { type }), link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = name; link.click(); URL.revokeObjectURL(link.href); }
 function folderDb() { return new Promise((resolve, reject) => { const request = indexedDB.open("scanfac-local", 1); request.onupgradeneeded = () => request.result.createObjectStore("handles"); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); }); }
-async function storedFolder() {
-  try { const db = await folderDb(); return await new Promise((resolve, reject) => { const request = db.transaction("handles", "readonly").objectStore("handles").get("data-folder"); request.onsuccess = () => { db.close(); resolve(request.result || null); }; request.onerror = () => { db.close(); reject(request.error); }; }); }
+async function storedHandle(key) {
+  try { const db = await folderDb(); return await new Promise((resolve, reject) => { const request = db.transaction("handles", "readonly").objectStore("handles").get(key); request.onsuccess = () => { db.close(); resolve(request.result || null); }; request.onerror = () => { db.close(); reject(request.error); }; }); }
   catch { return null; }
 }
-async function rememberFolder(handle) {
-  try { const db = await folderDb(); await new Promise((resolve, reject) => { const request = db.transaction("handles", "readwrite").objectStore("handles").put(handle, "data-folder"); request.onsuccess = () => { db.close(); resolve(); }; request.onerror = () => { db.close(); reject(request.error); }; }); }
+async function storedFolder() { return await storedHandle(WORK_FOLDER_KEY); }
+async function rememberFolder(handle, key = WORK_FOLDER_KEY) {
+  try { const db = await folderDb(); await new Promise((resolve, reject) => { const request = db.transaction("handles", "readwrite").objectStore("handles").put(handle, key); request.onsuccess = () => { db.close(); resolve(); }; request.onerror = () => { db.close(); reject(request.error); }; }); }
   catch { /* Le dossier reste disponible pour cette session. */ }
 }
 async function forgetStoredFolder() {
@@ -134,19 +140,20 @@ async function chooseDataFolder() {
 }
 async function activateFolder(handle) {
   if (!await canWriteFolder(handle, true)) return false;
-  dataFolderHandle = handle; renderFolderButton(); await loadMileageParameters(handle); await refreshMasterList(handle); return true;
+  dataFolderHandle = handle; renderFolderSummary(); await loadMileageParameters(handle); await refreshMasterList(handle); return true;
 }
-async function writeToFolder(name, content, type) { const handle = await dataFolderHandle.getFileHandle(name, { create: true }); const writable = await handle.createWritable(); await writable.write(new Blob([content], { type })); await writable.close(); }
+async function writeToFolder(folder, name, content, type) { const handle = await folder.getFileHandle(name, { create: true }); const writable = await handle.createWritable(); await writable.write(new Blob([content], { type })); await writable.close(); }
 async function refreshMasterList(folder = dataFolderHandle) {
   try {
-    if (!folder || await folder.queryPermission({ mode: "read" }) !== "granted") { masterSelect.disabled = true; return; }
+    if (!folder) { masterSelect.disabled = true; return; }
+    if (await folder.queryPermission({ mode: "read" }) !== "granted") { masterSelect.innerHTML = `<option value="">${escapeHtml(masterSelectLabel())}</option>`; masterSelectText.textContent = masterSelectLabel(); masterSelect.disabled = false; masterSelect.classList.add("needs-permission"); return; }
     const names = [];
     for await (const [name, handle] of folder.entries()) if (handle.kind === "file" && /^scanfac-(?!parametres\.json$|baremes\.json$)(?!.*-copie-secours-).+\.json$/i.test(name)) names.push(name);
     names.sort((a, b) => a.localeCompare(b, "fr"));
-    masterSelect.innerHTML = `<option value="">Fichiers enregistrés</option>${names.map(name => `<option value="${escapeHtml(name)}">${escapeHtml(name.replace(/^scanfac-|\.json$/gi, ""))}</option>`).join("")}`;
+    masterSelect.innerHTML = `<option value="">${escapeHtml(masterSelectLabel())}</option>${names.map(name => `<option value="${escapeHtml(name)}">${escapeHtml(name.replace(/^scanfac-|\.json$/gi, "").toLocaleUpperCase("fr-FR"))}</option>`).join("")}`; masterSelectText.textContent = masterSelectLabel();
     masterSelect.disabled = names.length === 0;
-    masterSelect.title = names.length ? "Choisir un fichier maître à restaurer" : "Aucun fichier maître dans ce dossier";
-  } catch { masterSelect.disabled = true; }
+    masterSelect.classList.remove("needs-permission");
+  } catch { masterSelect.disabled = true; masterSelect.classList.remove("needs-permission"); }
 }
 async function loadMileageParameters(folder) {
   try {
@@ -157,12 +164,13 @@ async function loadMileageParameters(folder) {
   } catch { /* Les valeurs intégrées restent utilisées tant que les paramètres ne sont pas disponibles. */ }
   updateExpenseInputMode();
 }
-async function exportJson() { const content = JSON.stringify(masterBackup, null, 2), fileName = backupFileName(); if (dataFolderHandle && await canWriteFolder(dataFolderHandle, true)) { await writeToFolder(fileName, content, "application/json"); return true; } downloadFile(content, "application/json", fileName); return true; }
+async function exportJson() { const content = JSON.stringify(masterBackup, null, 2), fileName = backupFileName(), folder = backupFolderHandle || dataFolderHandle; if (folder) { if (!await canWriteFolder(folder, true)) { alert(`L’autorisation du dossier ${backupFolderHandle ? "Sauvegardes" : "Travail"} n’est plus valide. Sélectionnez-le à nouveau dans Paramètres.`); return false; } await writeToFolder(folder, fileName, content, "application/json"); return true; } downloadFile(content, "application/json", fileName); return true; }
 function downloadJson() { downloadFile(JSON.stringify(masterBackup, null, 2), "application/json", backupFileName()); }
 async function saveMaster() {
   masterBackup.updatedAt = new Date().toISOString();
   if (!dataFolderHandle && "showDirectoryPicker" in window && !await chooseDataFolder()) return false;
-  if (dataFolderHandle && await canWriteFolder(dataFolderHandle, true)) { await writeToFolder(masterFileName(), JSON.stringify(masterBackup, null, 2), "application/json"); await refreshMasterList(); return true; }
+  if (dataFolderHandle && await canWriteFolder(dataFolderHandle, true)) { await writeToFolder(dataFolderHandle, masterFileName(), JSON.stringify(masterBackup, null, 2), "application/json"); await refreshMasterList(); return true; }
+  if (dataFolderHandle) { alert("L’autorisation du dossier Travail n’est plus valide. Sélectionnez-le à nouveau dans Paramètres."); return false; }
   if (!("showSaveFilePicker" in window)) {
     alert("L’écriture directe n’est pas disponible dans ce navigateur. Un export JSON va être téléchargé.");
     downloadJson();
@@ -371,8 +379,9 @@ async function exportCsv() {
   ];
   const csv = [headers, ...byMonthThenDate.map(e => [e.order, e.date, e.label, e.account, e.amount, e.departure || e.observations, e.routeDirection, e.arrival, e.kilometres]), ...summaryRows].map(row => row.map(csvValue).join(";")).join("\r\n");
   const content = "\uFEFF" + csv;
-  if (dataFolderHandle && await canWriteFolder(dataFolderHandle, true)) {
-    try { await writeToFolder(csvFileName(), content, "text/csv;charset=utf-8"); } catch { alert("Impossible d’écrire le CSV dans le dossier choisi."); }
+  if (csvFolderHandle) {
+    if (!await canWriteFolder(csvFolderHandle, true)) { alert("L’autorisation du dossier CSV n’est plus valide. Sélectionnez-le à nouveau dans Paramètres."); return false; }
+    try { await writeToFolder(csvFolderHandle, csvFileName(), content, "text/csv;charset=utf-8"); } catch { alert("Impossible d’écrire le CSV dans le dossier choisi."); }
   } else downloadFile(content, "text/csv;charset=utf-8", csvFileName());
 }
 document.querySelector("#exportButton").addEventListener("click", async event => {
@@ -432,6 +441,12 @@ masterSelect.addEventListener("change", async () => {
   try { const handle = await dataFolderHandle.getFileHandle(masterSelect.value); await applyMasterFile(await handle.getFile(), handle); alert(`Fichier maître restauré : ${expenses.length} dépense(s) affichée(s).`); }
   catch { alert("Impossible de restaurer ce fichier maître."); }
 });
+masterSelect.addEventListener("mousedown", async event => {
+  if (!dataFolderHandle || await dataFolderHandle.queryPermission({ mode: "read" }) === "granted") return;
+  event.preventDefault();
+  if (await canWriteFolder(dataFolderHandle, true)) { await loadMileageParameters(dataFolderHandle); await refreshMasterList(dataFolderHandle); }
+  else alert("Autorisez à nouveau le dossier Travail pour afficher les fichiers enregistrés.");
+});
 document.querySelector("#accountantButton").addEventListener("click", async () => {
   if (!masterBackup) { alert("Restaurez d’abord le fichier maître de cette personne."); return; }
   if (!confirm(`Préparer l’export comptable avec ${expenses.length} dépense(s) ?`)) return;
@@ -442,7 +457,6 @@ document.querySelector("#exportJsonButton").addEventListener("click", async () =
   try { await exportJson(); } catch { alert("Impossible de créer la copie de secours JSON."); }
 });
 document.querySelector("#exportJsonButton").title = "Crée une copie de secours complète des données au format JSON dans le dossier de travail.";
-folderButton.addEventListener("click", async () => { if (!dataFolderHandle || !await activateFolder(dataFolderHandle)) await chooseDataFolder(); });
 document.querySelector("#updateAppButton").addEventListener("click", async event => {
   if (hasUnsavedChanges) { alert("Sauvegardez d’abord vos modifications avant d’actualiser l’application."); return; }
   const button = event.currentTarget;
@@ -452,7 +466,7 @@ document.querySelector("#updateAppButton").addEventListener("click", async event
   try {
     dataFolderHandle = null;
     await forgetStoredFolder();
-    renderFolderButton();
+    renderFolderSummary();
     if (!("serviceWorker" in navigator) || location.protocol === "file:") { window.location.reload(); return; }
     const registration = await navigator.serviceWorker.getRegistration();
     if (!registration?.active) { window.location.reload(); return; }
@@ -473,7 +487,9 @@ document.querySelector("#restoreInput").addEventListener("change", async event =
   try { await applyMasterFile(file); alert(`Fichier maître restauré : ${expenses.length} dépense(s) affichée(s).`); }
   catch { alert("Ce fichier n’est pas un fichier maître ScanFac valide."); }
 });
-storedFolder().then(async handle => { if (!handle) return; dataFolderHandle = handle; renderFolderButton(); if (await canWriteFolder(handle)) { await loadMileageParameters(handle); await refreshMasterList(handle); } });
+storedFolder().then(async handle => { if (!handle) return; dataFolderHandle = handle; renderFolderSummary(); await loadMileageParameters(handle); await refreshMasterList(handle); });
+storedHandle(BACKUP_FOLDER_KEY).then(handle => { backupFolderHandle = handle; renderFolderSummary(); });
+storedHandle(CSV_FOLDER_KEY).then(handle => { csvFolderHandle = handle; renderFolderSummary(); });
 window.addEventListener("beforeunload", event => { if (!hasUnsavedChanges) return; event.preventDefault(); event.returnValue = ""; });
-if ("serviceWorker" in navigator && location.protocol !== "file:") window.addEventListener("load", () => navigator.serviceWorker.register("service-worker.js?v=12").catch(() => {}));
-renderPerson(); renderMonthOptions(); dateInput.value = currentMonthValue(); renderNatureList(); updateExpenseInputMode(); render();
+if ("serviceWorker" in navigator && location.protocol !== "file:") window.addEventListener("load", () => navigator.serviceWorker.register("service-worker.js?v=25").catch(() => {}));
+renderPerson(); renderFolderSummary(); renderMonthOptions(); dateInput.value = currentMonthValue(); renderNatureList(); updateExpenseInputMode(); render();
