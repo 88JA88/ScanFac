@@ -23,8 +23,10 @@ let masterFileHandle = null;
 let dataFolderHandle = null;
 let backupFolderHandle = null;
 let csvFolderHandle = null;
+let scanLotFolderHandle = null;
 let mileageParameters = JSON.parse(JSON.stringify(window.SCANFAC_PARAMETERS_DEFAULT));
 let hasUnsavedChanges = false;
+let recentScanLotImportIds = new Set();
 
 const body = document.querySelector("#expensesBody");
 const emptyState = document.querySelector("#emptyState");
@@ -39,6 +41,14 @@ const expenseTypeList = document.querySelector("#expenseTypeList");
 const expenseTypeName = document.querySelector("#expenseTypeName");
 const expenseTypeAccount = document.querySelector("#expenseTypeAccount");
 const guideDialog = document.querySelector("#guideDialog");
+const importScanLotButton = document.querySelector("#importScanLotButton");
+const scanLotHistoryButton = document.querySelector("#scanLotHistoryButton");
+const scanLotImportInput = document.querySelector("#scanLotImportInput");
+const scanLotCsvSelect = document.querySelector("#scanLotCsvSelect");
+const scanLotHistoryDialog = document.querySelector("#scanLotHistoryDialog");
+const scanLotImportHistory = document.querySelector("#scanLotImportHistory");
+const scanLotCsvDialog = document.querySelector("#scanLotCsvDialog");
+const scanLotCsvList = document.querySelector("#scanLotCsvList");
 const hoverTips = {
   backupButton: "Enregistre les dépenses et les paramètres dans le dossier de travail.",
   exportJsonButton: "Crée une copie de secours complète au format JSON dans le dossier de travail.",
@@ -58,10 +68,11 @@ const expenseForm = document.querySelector("#expenseForm");
 const WORK_FOLDER_KEY = "data-folder";
 const BACKUP_FOLDER_KEY = "backup-folder";
 const CSV_FOLDER_KEY = "csv-folder";
+const SCANLOT_FOLDER_KEY = "scanlot-import-folder";
 function masterSelectLabel() { return personName || "Fichiers enregistrés"; }
 function renderPerson() { const label = masterSelectLabel(), firstOption = masterSelect.querySelector('option[value=""]'); if (firstOption) firstOption.textContent = label; masterSelectText.textContent = label; }
-function renderFolderSummary() { const workName = dataFolderHandle?.name || "non sélectionné", backupName = backupFolderHandle?.name || "non sélectionné", csvName = csvFolderHandle?.name || "non sélectionné"; folderSummary.textContent = `Dossiers — Travail : ${workName} · Sauvegardes : ${backupName} · CSV : ${csvName}`; }
-function updateEntryAccess() { const locked = !masterFileHandle; expenseForm.querySelectorAll(".nature-button,#expenseDate,#expenseAmount,.save-expense,.mileage-route input,.mileage-route select,#backupButton,#exportJsonButton").forEach(control => { control.disabled = locked; }); }
+function renderFolderSummary() { const workName = dataFolderHandle?.name || "non sélectionné", backupName = backupFolderHandle?.name || "non sélectionné", csvName = csvFolderHandle?.name || "non sélectionné", scanLotName = scanLotFolderHandle?.name || "non sélectionné"; folderSummary.textContent = `Dossiers — Travail : ${workName} · Sauvegardes : ${backupName} · CSV : ${csvName} · Import ScanLot : ${scanLotName}`; }
+function updateEntryAccess() { const locked = !masterFileHandle; expenseForm.querySelectorAll(".nature-button,#expenseDate,#expenseAmount,.save-expense,.mileage-route input,.mileage-route select,#backupButton,#exportJsonButton,#importScanLotButton,#scanLotHistoryButton").forEach(control => { control.disabled = locked; }); scanLotCsvSelect.disabled = locked || !scanLotFolderHandle || scanLotCsvSelect.options.length < 2; }
 document.querySelector("#guideButton").addEventListener("click", () => guideDialog.showModal());
 function markUnsaved() { hasUnsavedChanges = true; unsavedNotice.hidden = false; }
 function markSaved() { hasUnsavedChanges = false; unsavedNotice.hidden = true; }
@@ -120,6 +131,50 @@ function migrateRestaurantToReception(backup) {
   }
   return true;
 }
+function normalizedText(value = "") { return String(value).trim().replace(/\s+/g, " ").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("fr-FR"); }
+function scanLotImports() { return Array.isArray(masterBackup?.scanLotImports) ? masterBackup.scanLotImports : []; }
+function parseCsv(content) {
+  const rows = [], row = []; let field = "", quoted = false;
+  for (let index = 0; index < content.length; index += 1) {
+    const character = content[index], next = content[index + 1];
+    if (quoted) { if (character === '"' && next === '"') { field += '"'; index += 1; } else if (character === '"') quoted = false; else field += character; continue; }
+    if (character === '"') quoted = true;
+    else if (character === ";") { row.push(field); field = ""; }
+    else if (character === "\n") { row.push(field.replace(/\r$/, "")); rows.push(row.splice(0)); field = ""; }
+    else field += character;
+  }
+  if (quoted) throw new Error("guillemets non fermés");
+  if (field || row.length) { row.push(field.replace(/\r$/, "")); rows.push(row); }
+  return rows.filter(line => line.some(value => String(value).trim()));
+}
+function scanLotMonthValue(monthName) { return [...dateInput.options].find(option => normalizedText(option.textContent) === normalizedText(monthName))?.value || ""; }
+function parseScanLotRows(content) {
+  const rows = parseCsv(content.replace(/^\uFEFF/, ""));
+  if (!rows.length) throw new Error("fichier vide");
+  const headers = rows.shift().map(normalizedText);
+  const required = ["mois", "fournisseur", "nature", "montant ttc"];
+  if (required.some(header => !headers.includes(header))) throw new Error("colonnes ScanLot attendues : Mois ; Fournisseur ; Nature ; Montant TTC");
+  const column = Object.fromEntries(headers.map((header, index) => [header, index]));
+  const errors = [], imported = [];
+  rows.forEach((row, index) => {
+    const line = index + 2, month = scanLotMonthValue(row[column.mois]), sourceLabel = String(row[column.nature] || "").trim();
+    const requestedLabel = normalizedText(sourceLabel) === "restaurant" ? "Réception" : sourceLabel;
+    const type = expenseTypes.find(item => normalizedText(item.label) === normalizedText(requestedLabel));
+    const amount = amountNumber(row[column["montant ttc"]]);
+    if (!month) errors.push(`ligne ${line} : mois « ${row[column.mois] || "vide"} » inconnu`);
+    if (!type) errors.push(`ligne ${line} : nature « ${sourceLabel || "vide"} » absente de ScanFac`);
+    if (!Number.isFinite(amount) || amount < 0) errors.push(`ligne ${line} : montant TTC invalide`);
+    if (month && type && Number.isFinite(amount) && amount >= 0) imported.push({ month, type, amount, supplier: String(row[column.fournisseur] || "").trim() });
+  });
+  if (!imported.length && !errors.length) throw new Error("aucune dépense à importer");
+  if (errors.length) throw new Error(`Import annulé :\n${errors.join("\n")}`);
+  return imported;
+}
+async function sha256(file) { const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer()); return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, "0")).join(""); }
+function renderScanLotImportHistory() {
+  const entries = scanLotImports();
+  scanLotImportHistory.innerHTML = entries.length ? `<ul>${entries.map(entry => `<li><b>${escapeHtml(entry.fileName)}</b><span>${new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "short" }).format(new Date(entry.importedAt))} · ${entry.count} dépense${entry.count > 1 ? "s" : ""} · ${escapeHtml(entry.status)}</span></li>`).join("")}</ul>` : "<p>Aucun CSV ScanLot n’a encore été importé.</p>";
+}
 function validMaster(backup) { return backup?.format === "scanfac-master" && Array.isArray(backup.bundles); }
 function masterExpenses(backup = masterBackup) {
   const unique = new Map();
@@ -133,7 +188,7 @@ function masterSequences(backup, items) {
   return result;
 }
 function safeFileName(value) { return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/gi, "-").replace(/(^-|-$)/g, "").toLowerCase() || "sauvegarde"; }
-function newMaster() { return { format: "scanfac-master", version: 2, ownerName: personName, updatedAt: new Date().toISOString(), expenseTypes: cloneExpenseTypes(expenseTypes), bundles: [] }; }
+function newMaster() { return { format: "scanfac-master", version: 2, ownerName: personName, updatedAt: new Date().toISOString(), expenseTypes: cloneExpenseTypes(expenseTypes), scanLotImports: [], bundles: [] }; }
 function masterFileName() { return `scanfac-${safeFileName(masterBackup.ownerName || personName)}.json`; }
 function backupFileName() { const stamp = new Date().toISOString().replace(/[-:TZ.]/g, "").slice(0, 14); return `scanfac-${safeFileName(personName || masterBackup?.ownerName || "frais")}-copie-secours-${stamp}.json`; }
 function csvFileName() { return `scanfac-${safeFileName(personName || masterBackup?.ownerName || "frais")}-comptable.csv`; }
@@ -153,6 +208,31 @@ async function forgetStoredFolder() {
   catch { /* L’absence de permission n’empêche pas l’actualisation. */ }
 }
 async function canWriteFolder(handle, ask = false) { if (!handle) return false; const options = { mode: "readwrite" }; if (await handle.queryPermission(options) === "granted") return true; return ask && await handle.requestPermission(options) === "granted"; }
+async function canReadFolder(handle, ask = false) { if (!handle) return false; const options = { mode: "read" }; if (await handle.queryPermission(options) === "granted") return true; return ask && await handle.requestPermission(options) === "granted"; }
+async function refreshScanLotCsvList(askPermission = false) {
+  const selected = scanLotCsvSelect.value;
+  if (!await canReadFolder(scanLotFolderHandle, askPermission)) {
+    scanLotCsvSelect.innerHTML = `<option value="">${scanLotFolderHandle ? "Autorisez le dossier Import ScanLot" : "Dossier Import ScanLot à choisir"}</option>`;
+    scanLotCsvList.innerHTML = `<p>${scanLotFolderHandle ? "Autorisez le dossier Import ScanLot dans Paramètres." : "Choisissez d’abord le dossier Import ScanLot dans Paramètres."}</p>`;
+    updateEntryAccess();
+    return false;
+  }
+  try {
+    const names = [];
+    for await (const [name, handle] of scanLotFolderHandle.entries()) if (handle.kind === "file" && /\.csv$/i.test(name)) names.push(name);
+    names.sort((a, b) => a.localeCompare(b, "fr"));
+    scanLotCsvSelect.innerHTML = `<option value="">${names.length ? "Choisir un CSV ScanLot" : "Aucun CSV ScanLot dans ce dossier"}</option>${names.map(name => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join("")}`;
+    scanLotCsvList.innerHTML = names.length ? names.map(name => `<button class="button secondary" type="button" data-scanlot-csv="${escapeHtml(name)}">${escapeHtml(name)}</button>`).join("") : "<p>Aucun CSV ScanLot dans ce dossier.</p>";
+    if (names.includes(selected)) scanLotCsvSelect.value = selected;
+    updateEntryAccess();
+    return true;
+  } catch {
+    scanLotCsvSelect.innerHTML = '<option value="">Lecture du dossier Import ScanLot impossible</option>';
+    scanLotCsvList.innerHTML = "<p>Lecture du dossier Import ScanLot impossible.</p>";
+    updateEntryAccess();
+    return false;
+  }
+}
 async function chooseDataFolder() {
   if (!("showDirectoryPicker" in window)) { alert("Le choix d’un dossier est disponible dans Chrome ou Edge. Les fichiers seront téléchargés de façon classique."); return false; }
   try { const handle = await window.showDirectoryPicker({ mode: "readwrite" }); if (!await activateFolder(handle)) return false; await rememberFolder(handle); alert(`Dossier de travail sélectionné : ${handle.name}.`); return true; }
@@ -306,12 +386,14 @@ function render() {
   renderMonthFilter();
   const rows = sortedFilteredExpenses();
   document.querySelector("#expenseCount").textContent = `${expenses.length} dépense${expenses.length > 1 ? "s" : ""}`;
-  body.innerHTML = rows.map(e => { const route = needsRouteFields(e.label), direction = e.routeDirection || "↔"; const firstField = route ? `<input class="cell-input route-input" data-field="departure" value="${escapeHtml(e.departure || "")}" placeholder="Départ" aria-label="Départ" list="knownPlaces" />` : `<input class="cell-input observations-input" data-field="observations" value="${escapeHtml(e.observations || "")}" aria-label="Observations" />`; return `<tr data-id="${e.id}"><td><strong class="order-number">${escapeHtml(e.order)}</strong></td><td><select class="cell-select" data-field="label" aria-label="Libellé">${labelOptions(e.label)}</select></td><td><input class="cell-input amount" data-field="amount" inputmode="decimal" value="${escapeHtml(e.amount)}" aria-label="Montant TTC" ${e.label === "Kilométrage" ? "readonly title=\"Montant calculé à partir des kilomètres\"" : ""} /></td><td>${firstField}</td><td>${route ? `<select class="cell-select direction-select" data-field="routeDirection" aria-label="Sens du trajet"><option value="→" ${direction === "→" ? "selected" : ""}>⟶</option><option value="↔" ${direction === "↔" ? "selected" : ""}>⟷</option></select>` : ""}</td><td>${route ? `<input class="cell-input route-input" data-field="arrival" value="${escapeHtml(e.arrival || "")}" placeholder="Arrivée" aria-label="Arrivée" list="knownPlaces" />` : ""}</td><td>${e.label === "Kilométrage" ? `<input class="cell-input kilometer-recap" value="${escapeHtml(e.kilometres ?? "")} km" aria-label="Kilomètres" readonly />` : ""}</td><td><button class="delete-button" data-action="delete" aria-label="Supprimer ${escapeHtml(e.order)}" title="Supprimer">×</button></td></tr>`; }).join("");
+  body.innerHTML = rows.map(e => { const route = needsRouteFields(e.label), direction = e.routeDirection || "↔"; const firstField = route ? `<input class="cell-input route-input" data-field="departure" value="${escapeHtml(e.departure || "")}" placeholder="Départ" aria-label="Départ" list="knownPlaces" />` : `<input class="cell-input observations-input" data-field="observations" value="${escapeHtml(e.observations || "")}" aria-label="Observations" />`; return `<tr data-id="${e.id}"><td><strong class="order-number">${escapeHtml(e.order)}</strong></td><td><select class="cell-select" data-field="label" aria-label="Libellé">${labelOptions(e.label)}</select></td><td><input class="cell-input amount" data-field="amount" inputmode="decimal" value="${escapeHtml(e.amount)}" aria-label="Montant TTC" ${e.label === "Kilométrage" ? "readonly title=\"Montant calculé à partir des kilomètres\"" : ""} /></td><td>${firstField}</td><td>${route ? `<select class="cell-select direction-select" data-field="routeDirection" aria-label="Sens du trajet"><option value="→" ${direction === "→" ? "selected" : ""}>⟶</option><option value="↔" ${direction === "↔" ? "selected" : ""}>⟷</option></select>` : ""}</td><td>${route ? `<input class="cell-input route-input" data-field="arrival" value="${escapeHtml(e.arrival || "")}" placeholder="Arrivée" aria-label="Arrivée" list="knownPlaces" />` : ""}</td><td>${e.label === "Kilométrage" ? `<input class="cell-input kilometer-recap" data-field="kilometres" inputmode="decimal" value="${escapeHtml(e.kilometres ?? "")}" placeholder="km" aria-label="Kilomètres" title="Modifier les kilomètres" />` : ""}</td><td><button class="delete-button" data-action="delete" aria-label="Supprimer ${escapeHtml(e.order)}" title="Supprimer">×</button></td></tr>`; }).join("");
+  body.querySelectorAll("tr").forEach(row => row.classList.toggle("scanlot-recent-import", recentScanLotImportIds.has(row.dataset.id)));
   if (emptyState) emptyState.hidden = rows.length !== 0; renderTotals(); renderPeriodFilter(); updateEntryAccess();
 }
 function getExpense(id) { return expenses.find(e => e.id === id); }
 function updateExpense(expense, field, value) {
   if (field === "amount") { const amount = amountNumber(value); if (!Number.isFinite(amount) || amount < 0) return false; expense.amount = amount.toFixed(2).replace(".", ","); }
+  else if (field === "kilometres") { const kilometres = amountNumber(value), amount = calculatedMileageAmount(kilometres); if (!Number.isFinite(kilometres) || kilometres < 0 || !Number.isFinite(amount)) return false; expense.kilometres = kilometres; expense.amount = amount.toFixed(2).replace(".", ","); }
   else if (field === "label") { expense.label = value; expense.account = typeFor(value).account; }
   else expense[field] = value;
   return true;
@@ -357,12 +439,12 @@ document.querySelector("#expenseForm").addEventListener("submit", event => {
   const calculatedAmount = isMileageExpense() ? calculatedMileageAmount(amount) : amount;
   if (!Number.isFinite(calculatedAmount)) { alert("Le coefficient kilométrique actif est invalide. Vérifiez les Paramètres."); return; }
   expenses.push({ id: crypto.randomUUID(), order: nextOrder(dateInput.value), date: dateInput.value, label: type.label, account: type.account, amount: calculatedAmount.toFixed(2).replace(".", ","), kilometres: isMileageExpense() ? amount : undefined, routeDirection: needsRouteFields() ? "↔" : undefined });
-  markUnsaved(); selectedLabel = ""; amountInput.value = ""; amountInput.setCustomValidity(""); renderNatureList(); updateExpenseInputMode(); render(); amountInput.focus();
+  recentScanLotImportIds.clear(); markUnsaved(); selectedLabel = ""; amountInput.value = ""; amountInput.setCustomValidity(""); renderNatureList(); updateExpenseInputMode(); render(); amountInput.focus();
 });
 body.addEventListener("change", event => {
   const field = event.target.dataset.field; if (!field) return;
   const expense = getExpense(event.target.closest("tr").dataset.id);
-  if (!updateExpense(expense, field, event.target.value)) { event.target.setCustomValidity("Montant invalide."); event.target.reportValidity(); } else markUnsaved();
+  if (!updateExpense(expense, field, event.target.value)) { event.target.setCustomValidity(field === "kilometres" ? "Indiquez un nombre de kilomètres valide." : "Montant invalide."); event.target.reportValidity(); } else { event.target.setCustomValidity(""); markUnsaved(); }
   render();
 });
 body.addEventListener("click", event => {
@@ -428,6 +510,44 @@ document.querySelector("#sendEmailButton").addEventListener("click", async () =>
   window.location.href = `mailto:${email.value.trim()}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
   void exportCsv();
 });
+async function importScanLotCsv(file) {
+  if (!masterBackup || !masterFileHandle) { alert("Restaurez d’abord le fichier maître dans lequel comptabiliser ce CSV."); return; }
+  try {
+    const fingerprint = await sha256(file);
+    if (scanLotImports().some(entry => entry.sha256 === fingerprint)) { alert("Ce fichier a déjà été comptabilisé dans ScanFac."); return; }
+    const rows = parseScanLotRows(await file.text());
+    const previousMaster = JSON.parse(JSON.stringify(masterBackup)), previousExpenses = expenses, previousSequences = { ...sequences }, previousUnsaved = hasUnsavedChanges, previousRecentImportIds = recentScanLotImportIds;
+    const importedExpenses = rows.map(row => ({ id: crypto.randomUUID(), order: nextOrder(row.month), date: row.month, label: row.type.label, account: row.type.account, amount: row.amount.toFixed(2).replace(".", ","), observations: row.supplier, routeDirection: needsRouteFields(row.type.label) ? "↔" : undefined }));
+    expenses = [...expenses, ...importedExpenses]; recentScanLotImportIds = new Set(importedExpenses.map(expense => expense.id));
+    masterBackup.scanLotImports = [...scanLotImports(), { fileName: file.name, sha256: fingerprint, importedAt: new Date().toISOString(), count: importedExpenses.length, status: "Comptabilisé" }];
+    masterBackup.ownerName = personName;
+    masterBackup.expenseTypes = cloneExpenseTypes(expenseTypes);
+    masterBackup.bundles = [{ id: masterBackup.bundles[0]?.id || crypto.randomUUID(), savedAt: new Date().toISOString(), expenses, sequences }];
+    if (!await saveMaster()) {
+      masterBackup = previousMaster; expenses = previousExpenses; sequences = previousSequences; recentScanLotImportIds = previousRecentImportIds;
+      if (previousUnsaved) markUnsaved(); else markSaved(); render();
+      alert("Import annulé : impossible de sauvegarder le fichier maître."); return;
+    }
+    markSaved(); render(); alert(`${importedExpenses.length} dépense${importedExpenses.length > 1 ? "s" : ""} ScanLot comptabilisée${importedExpenses.length > 1 ? "s" : ""}.`);
+  } catch (error) { alert(error.message || "Import ScanLot impossible."); }
+}
+importScanLotButton.addEventListener("click", async () => { await refreshScanLotCsvList(true); scanLotCsvDialog.showModal(); });
+scanLotCsvSelect.addEventListener("change", async () => {
+  const name = scanLotCsvSelect.value;
+  if (!name) return;
+  try { await importScanLotCsv(await (await scanLotFolderHandle.getFileHandle(name)).getFile()); }
+  catch (error) { alert(error.message || "Impossible de lire ce CSV ScanLot."); }
+  finally { await refreshScanLotCsvList(); }
+});
+scanLotCsvList.addEventListener("click", async event => {
+  const button = event.target.closest("[data-scanlot-csv]");
+  if (!button) return;
+  try { await importScanLotCsv(await (await scanLotFolderHandle.getFileHandle(button.dataset.scanlotCsv)).getFile()); scanLotCsvDialog.close(); }
+  catch (error) { alert(error.message || "Impossible de lire ce CSV ScanLot."); }
+  finally { await refreshScanLotCsvList(); }
+});
+scanLotImportInput.addEventListener("change", async event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) await importScanLotCsv(file); });
+scanLotHistoryButton.addEventListener("click", () => { renderScanLotImportHistory(); scanLotHistoryDialog.showModal(); });
 document.querySelector("#backupButton").addEventListener("click", async () => {
   if (!expenses.length && !hasUnsavedChanges) { alert("Ajoutez une dépense ou modifiez les natures de frais avant de sauvegarder."); return; }
   if (!personName) { alert("Choisissez d’abord « Nouveau nom » ou restaurez un fichier maître."); return; }
@@ -514,6 +634,7 @@ document.querySelector("#restoreInput").addEventListener("change", async event =
 storedFolder().then(async handle => { if (!handle) return; dataFolderHandle = handle; renderFolderSummary(); await loadMileageParameters(handle); await refreshMasterList(handle); });
 storedHandle(BACKUP_FOLDER_KEY).then(handle => { backupFolderHandle = handle; renderFolderSummary(); });
 storedHandle(CSV_FOLDER_KEY).then(handle => { csvFolderHandle = handle; renderFolderSummary(); });
+storedHandle(SCANLOT_FOLDER_KEY).then(async handle => { scanLotFolderHandle = handle; renderFolderSummary(); await refreshScanLotCsvList(); });
 window.addEventListener("beforeunload", event => { if (!hasUnsavedChanges) return; event.preventDefault(); event.returnValue = ""; });
 if ("serviceWorker" in navigator && location.protocol !== "file:") window.addEventListener("load", () => navigator.serviceWorker.register("service-worker.js?v=28").catch(() => {}));
 renderPerson(); renderFolderSummary(); renderMonthOptions(); dateInput.value = currentMonthValue(); renderNatureList(); updateExpenseInputMode(); render();
