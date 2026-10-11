@@ -1,6 +1,6 @@
 // Liste facilement adaptable lorsque les comptes seront définis avec le comptable.
 const defaultExpenseTypes = [
-  { label: "Restaurant", account: "" }, { label: "Parking", account: "" },
+  { label: "Réception", account: "" }, { label: "Parking", account: "" },
   { label: "Autoroute", account: "" }, { label: "Tramway", account: "" },
   { label: "Taxi", account: "" }, { label: "Hôtel", account: "" },
   { label: "Carburant", account: "" }, { label: "Fournitures", account: "" },
@@ -74,13 +74,11 @@ function escapeHtml(value = "") { return String(value).replace(/[&<>'"]/g, char 
 function amountNumber(value) { return Number(String(value).trim().replace(/\s/g, "").replace(",", ".")); }
 function isMileageExpense() { return selectedLabel === "Kilométrage"; }
 function needsRouteFields(label = selectedLabel) { return label === "Kilométrage" || label === "Autoroute"; }
-function activeMileageCoefficient() {
-  const row = mileageParameters.kilometrage?.[Number(mileageParameters.activePowerIndex || 0)];
-  return row ? amountNumber(row.jusqua5000) : NaN;
-}
 function calculatedMileageAmount(kilometres) {
-  const coefficient = activeMileageCoefficient();
-  return Number.isFinite(kilometres) && kilometres >= 0 && Number.isFinite(coefficient) ? kilometres * coefficient : NaN;
+  const row = mileageParameters.kilometrage?.[Number(mileageParameters.activePowerIndex || 0)];
+  if (!Number.isFinite(kilometres) || kilometres < 0 || !row) return NaN;
+  const field = mileageParameters.mileageTier === "over20000" ? "auDela20000" : mileageParameters.mileageTier === "from5001" ? "coefficient" : "jusqua5000";
+  const coefficient = amountNumber(row[field]); return Number.isFinite(coefficient) ? kilometres * coefficient : NaN;
 }
 function updateExpenseInputMode() {
   const mileage = isMileageExpense();
@@ -102,6 +100,26 @@ function nextOrder(date) {
 function normalizedExpenses(items) { return items.map(expense => ({ ...expense, date: expense.date?.slice(0, 7) || currentMonthValue() })); }
 function validExpenseTypes(types) { return Array.isArray(types) && types.length > 0 && types.every(type => typeof type?.label === "string" && type.label.trim()) && new Set(types.map(type => type.label.trim().toLocaleLowerCase("fr-FR"))).size === types.length; }
 function cloneExpenseTypes(types = defaultExpenseTypes) { return types.map(type => ({ label: type.label.trim(), account: String(type.account || "").trim() })); }
+// Les fichiers créés avant le renommage conservent toutes leurs écritures :
+// seule la nature « Restaurant » devient « Réception » lors de leur ouverture.
+function migrateRestaurantToReception(backup) {
+  let changed = false;
+  (backup?.bundles || []).forEach(bundle => (bundle.expenses || []).forEach(expense => {
+    if (expense.label === "Restaurant") { expense.label = "Réception"; changed = true; }
+  }));
+  if (!Array.isArray(backup?.expenseTypes)) return changed;
+  const reception = backup.expenseTypes.find(type => type?.label === "Réception");
+  const restaurants = backup.expenseTypes.filter(type => type?.label === "Restaurant");
+  if (!restaurants.length) return changed;
+  if (reception) {
+    if (!reception.account && restaurants[0].account) reception.account = restaurants[0].account;
+    backup.expenseTypes = backup.expenseTypes.filter(type => type?.label !== "Restaurant");
+  } else {
+    restaurants[0].label = "Réception";
+    backup.expenseTypes = backup.expenseTypes.filter(type => type?.label !== "Restaurant" || type === restaurants[0]);
+  }
+  return true;
+}
 function validMaster(backup) { return backup?.format === "scanfac-master" && Array.isArray(backup.bundles); }
 function masterExpenses(backup = masterBackup) {
   const unique = new Map();
@@ -209,10 +227,11 @@ async function restoreMaster() {
 async function applyMasterFile(file, handle = null) {
   const backup = JSON.parse(await file.text());
   if (!validMaster(backup)) throw new Error("invalid");
+  const migrated = migrateRestaurantToReception(backup);
   masterBackup = backup; masterFileHandle = handle; personName = backup.ownerName || "";
   expenses = masterExpenses(backup); sequences = masterSequences(backup, expenses); expenseTypes = validExpenseTypes(backup.expenseTypes) ? cloneExpenseTypes(backup.expenseTypes) : cloneExpenseTypes(); selectedLabel = "";
   monthRange = { from: "", to: "" }; monthFilterState = { operator: "=", value: "" }; accountantMode = false;
-  markSaved(); renderPerson(); renderNatureList(); render();
+  if (migrated) markUnsaved(); else markSaved(); renderPerson(); renderNatureList(); render();
 }
 function isInSelectedPeriod(expense) { return !accountantMode || ((!monthRange.from || expense.date >= monthRange.from) && (!monthRange.to || expense.date <= monthRange.to)); }
 function matchesMonthFilter(expense) {
@@ -496,5 +515,5 @@ storedFolder().then(async handle => { if (!handle) return; dataFolderHandle = ha
 storedHandle(BACKUP_FOLDER_KEY).then(handle => { backupFolderHandle = handle; renderFolderSummary(); });
 storedHandle(CSV_FOLDER_KEY).then(handle => { csvFolderHandle = handle; renderFolderSummary(); });
 window.addEventListener("beforeunload", event => { if (!hasUnsavedChanges) return; event.preventDefault(); event.returnValue = ""; });
-if ("serviceWorker" in navigator && location.protocol !== "file:") window.addEventListener("load", () => navigator.serviceWorker.register("service-worker.js?v=27").catch(() => {}));
+if ("serviceWorker" in navigator && location.protocol !== "file:") window.addEventListener("load", () => navigator.serviceWorker.register("service-worker.js?v=28").catch(() => {}));
 renderPerson(); renderFolderSummary(); renderMonthOptions(); dateInput.value = currentMonthValue(); renderNatureList(); updateExpenseInputMode(); render();

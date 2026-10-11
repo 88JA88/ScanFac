@@ -3,6 +3,7 @@ let loadedFromFile = false;
 const body = document.querySelector("#kilometrageBody");
 const status = document.querySelector("#saveStatus");
 const accountantEmailInput = document.querySelector("#accountantEmailSetting");
+const mileageTierInputs = [...document.querySelectorAll(".mileage-tier")];
 const workFolderName = document.querySelector("#workFolderName");
 const backupFolderName = document.querySelector("#backupFolderName");
 const csvFolderName = document.querySelector("#csvFolderName");
@@ -14,6 +15,7 @@ const escapeHtml = value => String(value ?? "").replace(/[&<>'"]/g, char => ({ "
 
 function render() {
   accountantEmailInput.value = parameters.accountantEmail || "";
+  mileageTierInputs.forEach(input => { input.checked = input.value === (parameters.mileageTier || "under5000"); });
   body.innerHTML = parameters.kilometrage.map((row, index) => `<tr><td><input class="active-power" type="radio" name="activePower" value="${index}" ${index === Number(parameters.activePowerIndex || 0) ? "checked" : ""} aria-label="Utiliser ${escapeHtml(row.puissance)}" /></td>${fields.map(field => `<td><input data-row="${index}" data-field="${field}" value="${escapeHtml(row[field])}" aria-label="${field}" /></td>`).join("")}</tr>`).join("");
 }
 function validParameters(data) { return data?.format === "scanfac-parametres" && Array.isArray(data.kilometrage); }
@@ -44,10 +46,11 @@ async function chooseFolder(key, label) { if (!("showDirectoryPicker" in window)
 body.addEventListener("input", event => { const input = event.target; if (input.dataset.row === undefined) return; parameters.kilometrage[Number(input.dataset.row)][input.dataset.field] = input.value; status.textContent = ""; });
 body.addEventListener("change", event => { const input = event.target; if (!input.matches(".active-power")) return; parameters.activePowerIndex = Number(input.value); status.textContent = ""; });
 accountantEmailInput.addEventListener("input", () => { parameters.accountantEmail = accountantEmailInput.value.trim(); status.textContent = ""; });
+mileageTierInputs.forEach(input => input.addEventListener("change", () => { parameters.mileageTier = input.value; status.textContent = "Palier sélectionné. Cliquez sur « Enregistrer les paramètres »."; }));
 document.querySelector("#saveParameters").addEventListener("click", saveParameters);
 document.querySelector("#chooseWorkFolder").addEventListener("click", () => chooseFolder(WORK_FOLDER_KEY, "Travail"));
 document.querySelector("#chooseBackupFolder").addEventListener("click", () => chooseFolder(BACKUP_FOLDER_KEY, "Sauvegardes"));
 document.querySelector("#chooseCsvFolder").addEventListener("click", () => chooseFolder(CSV_FOLDER_KEY, "CSV"));
 document.querySelector("#restoreDefaults").addEventListener("click", () => { if (!confirm("Rétablir les valeurs par défaut ? Les modifications non enregistrées seront perdues.")) return; parameters = JSON.parse(JSON.stringify(window.SCANFAC_PARAMETERS_DEFAULT)); render(); status.textContent = "Valeurs par défaut rétablies."; });
 render(); loadSavedParameters(); renderFolderNames();
-if ("serviceWorker" in navigator && location.protocol !== "file:") window.addEventListener("load", () => navigator.serviceWorker.register("service-worker.js?v=27").catch(() => {}));
+if ("serviceWorker" in navigator && location.protocol !== "file:") window.addEventListener("load", () => navigator.serviceWorker.register("service-worker.js?v=28").catch(() => {}));
