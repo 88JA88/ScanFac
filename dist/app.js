@@ -38,6 +38,7 @@ const knownPlaces = document.querySelector("#knownPlaces");
 const contractSuggestions = document.querySelector("#contractSuggestions");
 const unsavedNotice = document.querySelector("#unsavedNotice");
 const sortDialog = document.querySelector("#sortDialog");
+const updateDialog = document.querySelector("#updateDialog");
 const expenseTypesDialog = document.querySelector("#expenseTypesDialog");
 const expenseTypeList = document.querySelector("#expenseTypeList");
 const expenseTypeName = document.querySelector("#expenseTypeName");
@@ -74,6 +75,10 @@ const WORK_FOLDER_KEY = "data-folder";
 const BACKUP_FOLDER_KEY = "backup-folder";
 const CSV_FOLDER_KEY = "csv-folder";
 const SCANLOT_FOLDER_KEY = "scanlot-import-folder";
+const LAST_MASTER_FILE_KEY = "scanfac-last-master-file";
+function rememberLastMasterFile(name) { try { if (name) localStorage.setItem(LAST_MASTER_FILE_KEY, name); } catch { /* Mémoire locale indisponible. */ } }
+function lastMasterFileName() { try { return localStorage.getItem(LAST_MASTER_FILE_KEY) || ""; } catch { return ""; } }
+function forgetLastMasterFile() { try { localStorage.removeItem(LAST_MASTER_FILE_KEY); } catch { /* Mémoire locale indisponible. */ } }
 function masterSelectLabel() { return personName || "Fichiers enregistrés"; }
 function renderPerson() { const label = masterSelectLabel(), firstOption = masterSelect.querySelector('option[value=""]'); if (firstOption) firstOption.textContent = label; masterSelectText.textContent = label; }
 function renderFolderSummary() { const workName = dataFolderHandle?.name || "non sélectionné", backupName = backupFolderHandle?.name || "non sélectionné", csvName = csvFolderHandle?.name || "non sélectionné", scanLotName = scanLotFolderHandle?.name || "non sélectionné"; folderSummary.textContent = `Dossiers — Travail : ${workName} · Sauvegardes : ${backupName} · CSV : ${csvName} · Import ScanLot : ${scanLotName}`; }
@@ -247,7 +252,7 @@ async function chooseDataFolder() {
 }
 async function activateFolder(handle) {
   if (!await canWriteFolder(handle, true)) return false;
-  dataFolderHandle = handle; renderFolderSummary(); await loadMileageParameters(handle); await refreshMasterList(handle); return true;
+  dataFolderHandle = handle; renderFolderSummary(); await loadMileageParameters(handle); await refreshMasterList(handle); if (!masterBackup) await restoreLastMaster(handle); return true;
 }
 async function writeToFolder(folder, name, content, type) { const handle = await folder.getFileHandle(name, { create: true }); const writable = await handle.createWritable(); await writable.write(new Blob([content], { type })); await writable.close(); return handle; }
 async function refreshMasterList(folder = dataFolderHandle) {
@@ -286,7 +291,7 @@ async function saveMaster(createOnly = false) {
   if (!dataFolderHandle && "showDirectoryPicker" in window && !await chooseDataFolder()) return false;
   if (dataFolderHandle && await canWriteFolder(dataFolderHandle, true)) {
     if (createOnly) { try { await dataFolderHandle.getFileHandle(masterFileName()); alert(`Un fichier existe déjà pour « ${personName} ». Choisissez un autre nom ou restaurez ce fichier.`); return false; } catch (error) { if (error.name !== "NotFoundError") { alert("Impossible de vérifier le dossier Travail."); return false; } } }
-    masterFileHandle = await writeToFolder(dataFolderHandle, masterFileName(), JSON.stringify(masterBackup, null, 2), "application/json"); await refreshMasterList(); masterSelect.value = masterFileName(); updateEntryAccess(); return true;
+    masterFileHandle = await writeToFolder(dataFolderHandle, masterFileName(), JSON.stringify(masterBackup, null, 2), "application/json"); rememberLastMasterFile(masterFileHandle.name); await refreshMasterList(); masterSelect.value = masterFileName(); updateEntryAccess(); return true;
   }
   if (dataFolderHandle) { alert("L’autorisation du dossier Travail n’est plus valide. Sélectionnez-le à nouveau dans Paramètres."); return false; }
   if (!("showSaveFilePicker" in window)) {
@@ -300,7 +305,7 @@ async function saveMaster(createOnly = false) {
       types: [{ description: "Sauvegarde ScanFac", accept: { "application/json": [".json"] } }]
     });
     const writable = await masterFileHandle.createWritable();
-    await writable.write(JSON.stringify(masterBackup, null, 2)); await writable.close();
+    await writable.write(JSON.stringify(masterBackup, null, 2)); await writable.close(); rememberLastMasterFile(masterFileHandle.name);
     return true;
   } catch (error) {
     if (error.name !== "AbortError") alert("Impossible de mettre à jour le fichier maître.");
@@ -323,7 +328,7 @@ async function applyMasterFile(file, handle = null) {
   const backup = JSON.parse(await file.text());
   if (!validMaster(backup)) throw new Error("invalid");
   const migrated = migrateRestaurantToReception(backup);
-  masterBackup = backup; masterFileHandle = handle; personName = backup.ownerName || "";
+  masterBackup = backup; masterFileHandle = handle; if (handle?.name) rememberLastMasterFile(handle.name); personName = backup.ownerName || "";
   expenses = masterExpenses(backup); sequences = masterSequences(backup, expenses); expenseTypes = validExpenseTypes(backup.expenseTypes) ? cloneExpenseTypes(backup.expenseTypes) : cloneExpenseTypes(); contracts = validContracts(backup.contracts) ? cloneContracts(backup.contracts) : []; selectedLabel = "";
   monthRange = { from: "", to: "" }; monthFilterState = { operator: "=", value: "" }; accountantMode = false;
   if (migrated) markUnsaved(); else markSaved(); renderPerson(); renderNatureList(); render();
@@ -609,6 +614,10 @@ if (newExpenseButton) {
 }
 document.querySelector("#openMasterButton").addEventListener("click", async () => {
   try {
+    if (!masterBackup && dataFolderHandle && await activateFolder(dataFolderHandle) && masterBackup) {
+      alert(`Fichier maître restauré : ${expenses.length} dépense(s) affichée(s).`);
+      return;
+    }
     await restoreMaster();
     if (masterBackup) alert(`Fichier maître restauré : ${expenses.length} dépense(s) affichée(s).`);
   } catch { alert("Ce fichier n’est pas un fichier maître ScanFac valide."); }
@@ -634,16 +643,19 @@ document.querySelector("#exportJsonButton").addEventListener("click", async () =
   try { await exportJson(); } catch { alert("Impossible de créer la copie de secours JSON."); }
 });
 document.querySelector("#exportJsonButton").title = "Crée une copie de secours complète des données au format JSON dans le dossier de travail.";
+function askBeforeUpdate() { return new Promise(resolve => { const onClose = () => { updateDialog.removeEventListener("close", onClose); resolve(updateDialog.returnValue); }; updateDialog.addEventListener("close", onClose); updateDialog.showModal(); }); }
 document.querySelector("#updateAppButton").addEventListener("click", async event => {
-  if (hasUnsavedChanges) { alert("Sauvegardez d’abord vos modifications avant d’actualiser l’application."); return; }
+  if (hasUnsavedChanges) {
+    const choice = await askBeforeUpdate();
+    if (choice !== "yes" && choice !== "no") return;
+    if (choice === "yes") { if (!masterBackup) { alert("Aucune comptabilité n’est ouverte à exporter."); return; } try { if (!await exportJson()) return; } catch { alert("Impossible de créer la copie JSON de secours."); return; } }
+    markSaved();
+  }
   const button = event.currentTarget;
   const initialText = button.textContent;
   button.disabled = true;
   button.textContent = "Actualisation…";
   try {
-    dataFolderHandle = null;
-    await forgetStoredFolder();
-    renderFolderSummary();
     if (!("serviceWorker" in navigator) || location.protocol === "file:") { window.location.reload(); return; }
     const registration = await navigator.serviceWorker.getRegistration();
     if (!registration?.active) { window.location.reload(); return; }
@@ -658,13 +670,19 @@ document.querySelector("#updateAppButton").addEventListener("click", async event
     window.setTimeout(() => { button.disabled = false; button.textContent = initialText; }, 1500);
   }
 });
+async function restoreLastMaster(folder = dataFolderHandle) {
+  const name = lastMasterFileName();
+  if (!name || !folder || !await canReadFolder(folder)) return false;
+  try { const handle = await folder.getFileHandle(name); await applyMasterFile(await handle.getFile(), handle); masterSelect.value = name; return true; }
+  catch { forgetLastMasterFile(); return false; }
+}
 document.querySelector("#restoreInput").addEventListener("change", async event => {
   const file = event.target.files?.[0]; event.target.value = "";
   if (!file) return;
   try { await applyMasterFile(file); alert(`Fichier maître restauré : ${expenses.length} dépense(s) affichée(s).`); }
   catch { alert("Ce fichier n’est pas un fichier maître ScanFac valide."); }
 });
-storedFolder().then(async handle => { if (!handle) return; dataFolderHandle = handle; renderFolderSummary(); await loadMileageParameters(handle); await refreshMasterList(handle); });
+storedFolder().then(async handle => { if (!handle) return; dataFolderHandle = handle; renderFolderSummary(); await loadMileageParameters(handle); await refreshMasterList(handle); await restoreLastMaster(handle); });
 storedHandle(BACKUP_FOLDER_KEY).then(handle => { backupFolderHandle = handle; renderFolderSummary(); });
 storedHandle(CSV_FOLDER_KEY).then(handle => { csvFolderHandle = handle; renderFolderSummary(); });
 storedHandle(SCANLOT_FOLDER_KEY).then(async handle => { scanLotFolderHandle = handle; renderFolderSummary(); await refreshScanLotCsvList(); });
