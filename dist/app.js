@@ -8,6 +8,7 @@ const defaultExpenseTypes = [
   { label: "Postage", account: "" }, { label: "Divers", account: "" }
 ];
 let expenseTypes = defaultExpenseTypes.map(type => ({ ...type }));
+let contracts = [];
 const monthLabels = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"];
 // Chaque personne possède une liste continue de dépenses dans son fichier JSON.
 let expenses = [];
@@ -40,6 +41,9 @@ const expenseTypesDialog = document.querySelector("#expenseTypesDialog");
 const expenseTypeList = document.querySelector("#expenseTypeList");
 const expenseTypeName = document.querySelector("#expenseTypeName");
 const expenseTypeAccount = document.querySelector("#expenseTypeAccount");
+const contractsDialog = document.querySelector("#contractsDialog");
+const contractList = document.querySelector("#contractList");
+const contractName = document.querySelector("#contractName");
 const guideDialog = document.querySelector("#guideDialog");
 const importScanLotButton = document.querySelector("#importScanLotButton");
 const scanLotHistoryButton = document.querySelector("#scanLotHistoryButton");
@@ -111,6 +115,8 @@ function nextOrder(date) {
 function normalizedExpenses(items) { return items.map(expense => ({ ...expense, date: expense.date?.slice(0, 7) || currentMonthValue() })); }
 function validExpenseTypes(types) { return Array.isArray(types) && types.length > 0 && types.every(type => typeof type?.label === "string" && type.label.trim()) && new Set(types.map(type => type.label.trim().toLocaleLowerCase("fr-FR"))).size === types.length; }
 function cloneExpenseTypes(types = defaultExpenseTypes) { return types.map(type => ({ label: type.label.trim(), account: String(type.account || "").trim() })); }
+function validContracts(items) { return Array.isArray(items) && items.every(item => typeof item === "string" && item.trim()) && new Set(items.map(item => item.trim().toLocaleLowerCase("fr-FR"))).size === items.length; }
+function cloneContracts(items = contracts) { return items.map(item => item.trim()); }
 // Les fichiers créés avant le renommage conservent toutes leurs écritures :
 // seule la nature « Restaurant » devient « Réception » lors de leur ouverture.
 function migrateRestaurantToReception(backup) {
@@ -188,7 +194,7 @@ function masterSequences(backup, items) {
   return result;
 }
 function safeFileName(value) { return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/gi, "-").replace(/(^-|-$)/g, "").toLowerCase() || "sauvegarde"; }
-function newMaster() { return { format: "scanfac-master", version: 2, ownerName: personName, updatedAt: new Date().toISOString(), expenseTypes: cloneExpenseTypes(expenseTypes), scanLotImports: [], bundles: [] }; }
+function newMaster() { return { format: "scanfac-master", version: 3, ownerName: personName, expenseTypes: cloneExpenseTypes(expenseTypes), contracts: cloneContracts(), scanLotImports: [], bundles: [] }; }
 function masterFileName() { return `scanfac-${safeFileName(masterBackup.ownerName || personName)}.json`; }
 function backupFileName() { const stamp = new Date().toISOString().replace(/[-:TZ.]/g, "").slice(0, 14); return `scanfac-${safeFileName(personName || masterBackup?.ownerName || "frais")}-copie-secours-${stamp}.json`; }
 function csvFileName() { return `scanfac-${safeFileName(personName || masterBackup?.ownerName || "frais")}-comptable.csv`; }
@@ -309,7 +315,7 @@ async function applyMasterFile(file, handle = null) {
   if (!validMaster(backup)) throw new Error("invalid");
   const migrated = migrateRestaurantToReception(backup);
   masterBackup = backup; masterFileHandle = handle; personName = backup.ownerName || "";
-  expenses = masterExpenses(backup); sequences = masterSequences(backup, expenses); expenseTypes = validExpenseTypes(backup.expenseTypes) ? cloneExpenseTypes(backup.expenseTypes) : cloneExpenseTypes(); selectedLabel = "";
+  expenses = masterExpenses(backup); sequences = masterSequences(backup, expenses); expenseTypes = validExpenseTypes(backup.expenseTypes) ? cloneExpenseTypes(backup.expenseTypes) : cloneExpenseTypes(); contracts = validContracts(backup.contracts) ? cloneContracts(backup.contracts) : []; selectedLabel = "";
   monthRange = { from: "", to: "" }; monthFilterState = { operator: "=", value: "" }; accountantMode = false;
   if (migrated) markUnsaved(); else markSaved(); renderPerson(); renderNatureList(); render();
 }
@@ -351,6 +357,7 @@ function renderMonthFilter() {
   monthFilter.value = monthFilterState.value;
 }
 function labelOptions(value) { return expenseTypes.map(type => `<option value="${escapeHtml(type.label)}" ${type.label === value ? "selected" : ""}>${escapeHtml(type.label)}</option>`).join(""); }
+function contractOptions(value) { return `<option value="">—</option>${contracts.map(contract => `<option value="${escapeHtml(contract)}" ${contract === value ? "selected" : ""}>${escapeHtml(contract)}</option>`).join("")}`; }
 function renderNatureList() {
   document.querySelector("#natureList").innerHTML = expenseTypes.map((type, index) => `<button type="button" class="nature-button ${type.label === selectedLabel ? "selected" : ""}" data-label="${escapeHtml(type.label)}">${escapeHtml(type.label)}</button>${(index + 1) % 10 === 0 && index < expenseTypes.length - 1 ? `<span class="nature-break" aria-hidden="true"></span>` : ""}`).join("");
 }
@@ -362,19 +369,26 @@ function renderExpenseTypeList() {
     return `<div class="expense-type-row"><b>${escapeHtml(type.label)}</b><label class="expense-type-account-field"><span>N° de compte</span><input class="expense-type-account-input" type="text" maxlength="30" value="${escapeHtml(type.account)}" data-expense-type-account="${escapeHtml(type.label)}" aria-label="N° de compte pour ${escapeHtml(type.label)}" placeholder="Facultatif" /></label><button class="delete-expense-type" type="button" data-delete-expense-type="${escapeHtml(type.label)}" ${disabled ? `disabled title="${title}"` : ""}>Supprimer</button></div>`;
   }).join("");
 }
+function renderContractList() {
+  contractList.innerHTML = contracts.length ? contracts.map(contract => {
+    const used = expenses.some(expense => expense.contract === contract);
+    return `<div class="contract-row"><b>${escapeHtml(contract)}</b><button class="delete-contract" type="button" data-delete-contract="${escapeHtml(contract)}" ${used ? 'disabled title="Ce contrat est déjà utilisé"' : ""}>Supprimer</button></div>`;
+  }).join("") : "<p class=\"dialog-copy\">Aucun contrat pour le moment.</p>";
+}
 function renderTotals() {
   const periodExpenses = expenses.filter(expense => isInSelectedPeriod(expense) && matchesMonthFilter(expense));
   const total = periodExpenses.reduce((sum, expense) => sum + amountNumber(expense.amount), 0);
   const kilometres = periodExpenses.filter(expense => expense.label === "Kilométrage").reduce((sum, expense) => sum + amountNumber(expense.kilometres || 0), 0);
-  const groupByMonth = sortRules[0]?.field === "date";
+  const primarySort = sortRules[0]?.field;
+  const groupByMonth = primarySort === "date";
   document.querySelector("#grandTotal").textContent = euro(total);
   document.querySelector("#grandTotal").previousElementSibling.textContent = "Total :";
   document.querySelector("#kilometerTotal").textContent = kilometres ? `${new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 2 }).format(kilometres)} km` : "";
   document.querySelector("#periodLabel").textContent = `${periodExpenses.length} dépense${periodExpenses.length > 1 ? "s" : ""} enregistrée${periodExpenses.length > 1 ? "s" : ""}`;
-  document.querySelector("#totalsHeading").textContent = groupByMonth ? "Totaux par mois" : "Totaux par libellé";
+  document.querySelector("#totalsHeading").textContent = groupByMonth ? "Totaux par mois" : primarySort === "contract" ? "Totaux par contrat" : "Totaux par libellé";
   // L'ordre d'apparition des groupes suit le tri actif du tableau.
   const sums = new Map(); sortedFilteredExpenses().forEach(e => {
-    const key = groupByMonth ? monthName(e.date) : e.label;
+    const key = groupByMonth ? monthName(e.date) : primarySort === "contract" ? (e.contract || "Sans contrat") : e.label;
     sums.set(key, (sums.get(key) || 0) + amountNumber(e.amount));
   });
   document.querySelector("#labelTotals").innerHTML = sums.size
@@ -386,7 +400,7 @@ function render() {
   renderMonthFilter();
   const rows = sortedFilteredExpenses();
   document.querySelector("#expenseCount").textContent = `${expenses.length} dépense${expenses.length > 1 ? "s" : ""}`;
-  body.innerHTML = rows.map(e => { const route = needsRouteFields(e.label), direction = e.routeDirection || "↔"; const firstField = route ? `<input class="cell-input route-input" data-field="departure" value="${escapeHtml(e.departure || "")}" placeholder="Départ" aria-label="Départ" list="knownPlaces" />` : `<input class="cell-input observations-input" data-field="observations" value="${escapeHtml(e.observations || "")}" aria-label="Observations" />`; return `<tr data-id="${e.id}"><td><strong class="order-number">${escapeHtml(e.order)}</strong></td><td><select class="cell-select" data-field="label" aria-label="Libellé">${labelOptions(e.label)}</select></td><td><input class="cell-input amount" data-field="amount" inputmode="decimal" value="${escapeHtml(e.amount)}" aria-label="Montant TTC" ${e.label === "Kilométrage" ? "readonly title=\"Montant calculé à partir des kilomètres\"" : ""} /></td><td>${firstField}</td><td>${route ? `<select class="cell-select direction-select" data-field="routeDirection" aria-label="Sens du trajet"><option value="→" ${direction === "→" ? "selected" : ""}>⟶</option><option value="↔" ${direction === "↔" ? "selected" : ""}>⟷</option></select>` : ""}</td><td>${route ? `<input class="cell-input route-input" data-field="arrival" value="${escapeHtml(e.arrival || "")}" placeholder="Arrivée" aria-label="Arrivée" list="knownPlaces" />` : ""}</td><td>${e.label === "Kilométrage" ? `<input class="cell-input kilometer-recap" data-field="kilometres" inputmode="decimal" value="${escapeHtml(e.kilometres ?? "")}" placeholder="km" aria-label="Kilomètres" title="Modifier les kilomètres" />` : ""}</td><td><button class="delete-button" data-action="delete" aria-label="Supprimer ${escapeHtml(e.order)}" title="Supprimer">×</button></td></tr>`; }).join("");
+  body.innerHTML = rows.map(e => { const route = needsRouteFields(e.label), direction = e.routeDirection || "↔"; const firstField = route ? `<input class="cell-input route-input" data-field="departure" value="${escapeHtml(e.departure || "")}" placeholder="Départ" aria-label="Départ" list="knownPlaces" />` : `<input class="cell-input observations-input" data-field="observations" value="${escapeHtml(e.observations || "")}" aria-label="Observations" />`; return `<tr data-id="${e.id}"><td><strong class="order-number">${escapeHtml(e.order)}</strong></td><td><select class="cell-select contract-select" data-field="contract" aria-label="Contrat">${contractOptions(e.contract || "")}</select></td><td><select class="cell-select" data-field="label" aria-label="Libellé">${labelOptions(e.label)}</select></td><td><input class="cell-input amount" data-field="amount" inputmode="decimal" value="${escapeHtml(e.amount)}" aria-label="Montant TTC" ${e.label === "Kilométrage" ? "readonly title=\"Montant calculé à partir des kilomètres\"" : ""} /></td><td>${firstField}</td><td>${route ? `<select class="cell-select direction-select" data-field="routeDirection" aria-label="Sens du trajet"><option value="→" ${direction === "→" ? "selected" : ""}>⟶</option><option value="↔" ${direction === "↔" ? "selected" : ""}>⟷</option></select>` : ""}</td><td>${route ? `<input class="cell-input route-input" data-field="arrival" value="${escapeHtml(e.arrival || "")}" placeholder="Arrivée" aria-label="Arrivée" list="knownPlaces" />` : ""}</td><td>${e.label === "Kilométrage" ? `<input class="cell-input kilometer-recap" data-field="kilometres" inputmode="decimal" value="${escapeHtml(e.kilometres ?? "")}" placeholder="km" aria-label="Kilomètres" title="Modifier les kilomètres" />` : ""}</td><td><button class="delete-button" data-action="delete" aria-label="Supprimer ${escapeHtml(e.order)}" title="Supprimer">×</button></td></tr>`; }).join("");
   body.querySelectorAll("tr").forEach(row => row.classList.toggle("scanlot-recent-import", recentScanLotImportIds.has(row.dataset.id)));
   if (emptyState) emptyState.hidden = rows.length !== 0; renderTotals(); renderPeriodFilter(); updateEntryAccess();
 }
@@ -399,6 +413,18 @@ function updateExpense(expense, field, value) {
   return true;
 }
 document.querySelector("#manageExpenseTypesButton").addEventListener("click", () => { renderExpenseTypeList(); expenseTypeName.value = ""; expenseTypeAccount.value = ""; expenseTypesDialog.showModal(); expenseTypeName.focus(); });
+document.querySelector("#manageContractsButton").addEventListener("click", () => { renderContractList(); contractName.value = ""; contractsDialog.showModal(); contractName.focus(); });
+document.querySelector("#addContractButton").addEventListener("click", () => {
+  const contract = contractName.value.trim().replace(/\s+/g, " ");
+  if (!contract) { contractName.focus(); return; }
+  if (contracts.some(item => item.localeCompare(contract, "fr", { sensitivity: "accent" }) === 0)) { alert("Ce contrat existe déjà."); contractName.focus(); return; }
+  contracts.push(contract); contracts.sort((a, b) => a.localeCompare(b, "fr")); markUnsaved(); renderContractList(); contractName.value = ""; contractName.focus();
+});
+contractName.addEventListener("keydown", event => { if (event.key === "Enter") { event.preventDefault(); document.querySelector("#addContractButton").click(); } });
+contractList.addEventListener("click", event => {
+  const button = event.target.closest("[data-delete-contract]"); if (!button || button.disabled) return;
+  contracts = contracts.filter(contract => contract !== button.dataset.deleteContract); markUnsaved(); renderContractList(); render();
+});
 document.querySelector("#addExpenseTypeButton").addEventListener("click", () => {
   const label = expenseTypeName.value.trim().replace(/\s+/g, " ");
   if (!label) { alert("Indiquez le nom de la nature de frais."); expenseTypeName.focus(); return; }
@@ -456,11 +482,12 @@ monthOperator.addEventListener("change", () => { monthFilterState.operator = mon
 monthFilter.addEventListener("change", () => { monthFilterState.value = monthFilter.value; render(); });
 fromMonth.addEventListener("change", () => { monthRange.from = fromMonth.value; if (monthRange.from > monthRange.to) monthRange.to = monthRange.from; render(); });
 toMonth.addEventListener("change", () => { monthRange.to = toMonth.value; if (monthRange.to < monthRange.from) monthRange.from = monthRange.to; render(); });
-const fields = [{ value:"date", label:"Mois" }, { value:"label", label:"Libellé" }, { value:"amount", label:"Montant TTC" }, { value:"order", label:"N° d’ordre" }];
+const fields = [{ value:"contract", label:"Contrat" }, { value:"date", label:"Mois" }, { value:"label", label:"Libellé" }, { value:"amount", label:"Montant TTC" }, { value:"order", label:"N° d’ordre" }];
 const sortRulesEl = document.querySelector("#sortRules");
 function renderSortRules() { sortRulesEl.innerHTML = sortRules.map((rule, index) => `<div class="sort-rule"><span class="rule-number">${index + 1}</span><select class="rule-select" data-sort-field="${index}">${fields.map(field => `<option value="${field.value}" ${field.value === rule.field ? "selected" : ""}>${field.label}</option>`).join("")}</select><select class="rule-select" data-sort-direction="${index}"><option value="asc" ${rule.direction === "asc" ? "selected" : ""}>Croissant</option><option value="desc" ${rule.direction === "desc" ? "selected" : ""}>Décroissant</option></select><button type="button" class="remove-rule" data-remove-rule="${index}" aria-label="Supprimer ce critère">×</button></div>`).join(""); }
 document.querySelector("#sortByMonthButton").addEventListener("click", () => { sortRules = [{ field: "date", direction: "asc" }, { field: "label", direction: "asc" }, { field: "order", direction: "asc" }]; render(); });
 document.querySelector("#sortByLabelButton").addEventListener("click", () => { sortRules = [{ field: "label", direction: "asc" }, { field: "date", direction: "asc" }, { field: "order", direction: "asc" }]; render(); });
+document.querySelector("#sortByContractButton").addEventListener("click", () => { sortRules = [{ field: "contract", direction: "asc" }, { field: "date", direction: "asc" }, { field: "order", direction: "asc" }]; render(); });
 document.querySelector("#addSortRule").addEventListener("click", () => { sortRules.push({ field: "order", direction: "asc" }); renderSortRules(); });
 sortRulesEl.addEventListener("change", event => { const index = event.target.dataset.sortField ?? event.target.dataset.sortDirection; if (index !== undefined) sortRules[index][event.target.dataset.sortField !== undefined ? "field" : "direction"] = event.target.value; });
 sortRulesEl.addEventListener("click", event => { const index = event.target.dataset.removeRule; if (index !== undefined && sortRules.length > 1) { sortRules.splice(index, 1); renderSortRules(); } });
@@ -474,16 +501,16 @@ function csvTotals(expensesToSummarize) {
   return { total, kilometres, totalsByLabel };
 }
 async function exportCsv() {
-  const headers = ["N° d’ordre", "Mois de saisie", "Libellé", "N° compte comptable", "Montant TTC", "Départ / observations", "Sens", "Arrivée", "Kilomètres"];
+  const headers = ["N° d’ordre", "Contrat", "Mois de saisie", "Libellé", "N° compte comptable", "Montant TTC", "Départ / observations", "Sens", "Arrivée", "Kilomètres"];
   const byMonthThenDate = expenses.filter(isInSelectedPeriod).sort((a, b) => a.date.localeCompare(b.date) || a.order.localeCompare(b.order, "fr", { numeric: true }));
   const { total, kilometres, totalsByLabel } = csvTotals(byMonthThenDate);
   const summaryRows = [
     [],
-    ["Récapitulatif", "", "", "", "Montant TTC", "", "", "", "Kilomètres"],
-    ["Total général", "", "", "", total.toFixed(2).replace(".", ","), "", "", "", kilometres || ""],
-    ...[...totalsByLabel.entries()].map(([label, amount]) => [`Total ${label}`, "", "", "", amount.toFixed(2).replace(".", ","), "", "", "", ""])
+    ["Récapitulatif", "", "", "", "", "Montant TTC", "", "", "", "Kilomètres"],
+    ["Total général", "", "", "", "", total.toFixed(2).replace(".", ","), "", "", "", kilometres || ""],
+    ...[...totalsByLabel.entries()].map(([label, amount]) => [`Total ${label}`, "", "", "", "", amount.toFixed(2).replace(".", ","), "", "", "", ""])
   ];
-  const csv = [headers, ...byMonthThenDate.map(e => [e.order, e.date, e.label, e.account, e.amount, e.departure || e.observations, e.routeDirection, e.arrival, e.kilometres]), ...summaryRows].map(row => row.map(csvValue).join(";")).join("\r\n");
+  const csv = [headers, ...byMonthThenDate.map(e => [e.order, e.contract, e.date, e.label, e.account, e.amount, e.departure || e.observations, e.routeDirection, e.arrival, e.kilometres]), ...summaryRows].map(row => row.map(csvValue).join(";")).join("\r\n");
   const content = "\uFEFF" + csv;
   if (csvFolderHandle) {
     if (!await canWriteFolder(csvFolderHandle, true)) { alert("L’autorisation du dossier CSV n’est plus valide. Sélectionnez-le à nouveau dans Paramètres."); return false; }
@@ -521,7 +548,7 @@ async function importScanLotCsv(file) {
     expenses = [...expenses, ...importedExpenses]; recentScanLotImportIds = new Set(importedExpenses.map(expense => expense.id));
     masterBackup.scanLotImports = [...scanLotImports(), { fileName: file.name, sha256: fingerprint, importedAt: new Date().toISOString(), count: importedExpenses.length, status: "Comptabilisé" }];
     masterBackup.ownerName = personName;
-    masterBackup.expenseTypes = cloneExpenseTypes(expenseTypes);
+    masterBackup.expenseTypes = cloneExpenseTypes(expenseTypes); masterBackup.contracts = cloneContracts();
     masterBackup.bundles = [{ id: masterBackup.bundles[0]?.id || crypto.randomUUID(), savedAt: new Date().toISOString(), expenses, sequences }];
     if (!await saveMaster()) {
       masterBackup = previousMaster; expenses = previousExpenses; sequences = previousSequences; recentScanLotImportIds = previousRecentImportIds;
@@ -554,7 +581,7 @@ document.querySelector("#backupButton").addEventListener("click", async () => {
   if (masterBackup && masterBackup.ownerName && masterBackup.ownerName !== personName) { alert("Cliquez sur « Nouvelle personne » avant de commencer une comptabilité différente."); return; }
   if (!masterBackup) masterBackup = newMaster();
   masterBackup.ownerName = personName;
-  masterBackup.expenseTypes = cloneExpenseTypes(expenseTypes);
+  masterBackup.expenseTypes = cloneExpenseTypes(expenseTypes); masterBackup.contracts = cloneContracts();
   // Les anciens fichiers à plusieurs liasses sont conservés à la lecture, puis
   // réunis en une seule liste continue lors de leur prochaine sauvegarde.
   masterBackup.bundles = [{ id: masterBackup.bundles[0]?.id || crypto.randomUUID(), savedAt: new Date().toISOString(), expenses, sequences }];
@@ -564,7 +591,7 @@ document.querySelector("#newPersonButton").addEventListener("click", async () =>
   const nextName = prompt("Nom de la personne :")?.trim();
   if (!nextName) return;
   if (!confirm(`Commencer une nouvelle comptabilité pour « ${nextName} » ? La liste affichée sera vidée, sans supprimer les fichiers JSON existants.`)) return;
-  personName = nextName; masterBackup = newMaster(); masterFileHandle = null; expenses = []; sequences = {}; expenseTypes = cloneExpenseTypes(); monthRange = { from: "", to: "" }; monthFilterState = { operator: "=", value: "" }; accountantMode = false; renderPerson(); renderNatureList(); render(); if (!await saveMaster(true)) { updateEntryAccess(); return; } markSaved(); render(); amountInput.focus();
+  personName = nextName; masterFileHandle = null; expenses = []; sequences = {}; expenseTypes = cloneExpenseTypes(); contracts = []; masterBackup = newMaster(); monthRange = { from: "", to: "" }; monthFilterState = { operator: "=", value: "" }; accountantMode = false; renderPerson(); renderNatureList(); render(); if (!await saveMaster(true)) { updateEntryAccess(); return; } markSaved(); render(); amountInput.focus();
 });
 const newExpenseButton = document.querySelector("#newExpenseButton");
 if (newExpenseButton) {
