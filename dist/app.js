@@ -648,7 +648,7 @@ document.querySelector("#updateAppButton").addEventListener("click", async event
   if (hasUnsavedChanges) {
     const choice = await askBeforeUpdate();
     if (choice !== "yes" && choice !== "no") return;
-    if (choice === "yes") { if (!masterBackup) { alert("Aucune comptabilité n’est ouverte à exporter."); return; } try { if (!await exportJson()) return; } catch { alert("Impossible de créer la copie JSON de secours."); return; } }
+    if (choice === "yes") { if (!masterBackup) { alert("Aucune comptabilité n’est ouverte à sauvegarder."); return; } try { if (!await saveMaster()) return; } catch { alert("Impossible de sauvegarder le fichier maître."); return; } }
     markSaved();
   }
   const button = event.currentTarget;
