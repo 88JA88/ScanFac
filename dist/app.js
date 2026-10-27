@@ -35,6 +35,7 @@ const dateInput = document.querySelector("#expenseDate");
 const amountInput = document.querySelector("#expenseAmount");
 const amountLabel = document.querySelector("#amountLabel");
 const knownPlaces = document.querySelector("#knownPlaces");
+const contractSuggestions = document.querySelector("#contractSuggestions");
 const unsavedNotice = document.querySelector("#unsavedNotice");
 const sortDialog = document.querySelector("#sortDialog");
 const expenseTypesDialog = document.querySelector("#expenseTypesDialog");
@@ -76,10 +77,10 @@ const SCANLOT_FOLDER_KEY = "scanlot-import-folder";
 function masterSelectLabel() { return personName || "Fichiers enregistrés"; }
 function renderPerson() { const label = masterSelectLabel(), firstOption = masterSelect.querySelector('option[value=""]'); if (firstOption) firstOption.textContent = label; masterSelectText.textContent = label; }
 function renderFolderSummary() { const workName = dataFolderHandle?.name || "non sélectionné", backupName = backupFolderHandle?.name || "non sélectionné", csvName = csvFolderHandle?.name || "non sélectionné", scanLotName = scanLotFolderHandle?.name || "non sélectionné"; folderSummary.textContent = `Dossiers — Travail : ${workName} · Sauvegardes : ${backupName} · CSV : ${csvName} · Import ScanLot : ${scanLotName}`; }
-function updateEntryAccess() { const locked = !masterFileHandle; expenseForm.querySelectorAll(".nature-button,#expenseDate,#expenseAmount,.save-expense,.mileage-route input,.mileage-route select,#backupButton,#exportJsonButton,#importScanLotButton,#scanLotHistoryButton").forEach(control => { control.disabled = locked; }); scanLotCsvSelect.disabled = locked || !scanLotFolderHandle || scanLotCsvSelect.options.length < 2; }
+function updateEntryAccess() { const locked = !masterBackup; expenseForm.querySelectorAll(".nature-button,#expenseDate,#expenseAmount,.save-expense,.mileage-route input,.mileage-route select,#backupButton,#exportJsonButton,#importScanLotButton,#scanLotHistoryButton").forEach(control => { control.disabled = locked; }); scanLotCsvSelect.disabled = locked || !scanLotFolderHandle || scanLotCsvSelect.options.length < 2; }
 document.querySelector("#guideButton").addEventListener("click", () => guideDialog.showModal());
-function markUnsaved() { hasUnsavedChanges = true; unsavedNotice.hidden = false; }
-function markSaved() { hasUnsavedChanges = false; unsavedNotice.hidden = true; }
+function markUnsaved() { hasUnsavedChanges = true; unsavedNotice.hidden = false; document.querySelector("#backupButton").classList.add("needs-save"); }
+function markSaved() { hasUnsavedChanges = false; unsavedNotice.hidden = true; document.querySelector("#backupButton").classList.remove("needs-save"); }
 function currentMonthValue() { return new Date().toLocaleDateString("en-CA").slice(0, 7); }
 function renderMonthOptions() {
   const year = currentMonthValue().slice(0, 4);
@@ -270,9 +271,17 @@ async function loadMileageParameters(folder) {
   } catch { /* Les valeurs intégrées restent utilisées tant que les paramètres ne sont pas disponibles. */ }
   updateExpenseInputMode();
 }
-async function exportJson() { const content = JSON.stringify(masterBackup, null, 2), fileName = backupFileName(), folder = backupFolderHandle || dataFolderHandle; if (folder) { if (!await canWriteFolder(folder, true)) { alert(`L’autorisation du dossier ${backupFolderHandle ? "Sauvegardes" : "Travail"} n’est plus valide. Sélectionnez-le à nouveau dans Paramètres.`); return false; } await writeToFolder(folder, fileName, content, "application/json"); return true; } downloadFile(content, "application/json", fileName); return true; }
-function downloadJson() { downloadFile(JSON.stringify(masterBackup, null, 2), "application/json", backupFileName()); }
+function synchronizeMaster() {
+  if (!masterBackup) return;
+  masterBackup.ownerName = personName;
+  masterBackup.expenseTypes = cloneExpenseTypes(expenseTypes);
+  masterBackup.contracts = cloneContracts();
+  masterBackup.bundles = [{ id: masterBackup.bundles[0]?.id || crypto.randomUUID(), savedAt: new Date().toISOString(), expenses, sequences }];
+}
+async function exportJson() { synchronizeMaster(); const content = JSON.stringify(masterBackup, null, 2), fileName = backupFileName(), folder = backupFolderHandle || dataFolderHandle; if (folder) { if (!await canWriteFolder(folder, true)) { alert(`L’autorisation du dossier ${backupFolderHandle ? "Sauvegardes" : "Travail"} n’est plus valide. Sélectionnez-le à nouveau dans Paramètres.`); return false; } await writeToFolder(folder, fileName, content, "application/json"); return true; } downloadFile(content, "application/json", fileName); return true; }
+function downloadJson() { synchronizeMaster(); downloadFile(JSON.stringify(masterBackup, null, 2), "application/json", backupFileName()); }
 async function saveMaster(createOnly = false) {
+  synchronizeMaster();
   masterBackup.updatedAt = new Date().toISOString();
   if (!dataFolderHandle && "showDirectoryPicker" in window && !await chooseDataFolder()) return false;
   if (dataFolderHandle && await canWriteFolder(dataFolderHandle, true)) {
@@ -357,7 +366,7 @@ function renderMonthFilter() {
   monthFilter.value = monthFilterState.value;
 }
 function labelOptions(value) { return expenseTypes.map(type => `<option value="${escapeHtml(type.label)}" ${type.label === value ? "selected" : ""}>${escapeHtml(type.label)}</option>`).join(""); }
-function contractOptions(value) { return `<option value="">—</option>${contracts.map(contract => `<option value="${escapeHtml(contract)}" ${contract === value ? "selected" : ""}>${escapeHtml(contract)}</option>`).join("")}`; }
+function renderContractSuggestions() { contractSuggestions.innerHTML = contracts.map(contract => `<option value="${escapeHtml(contract)}"></option>`).join(""); }
 function renderNatureList() {
   document.querySelector("#natureList").innerHTML = expenseTypes.map((type, index) => `<button type="button" class="nature-button ${type.label === selectedLabel ? "selected" : ""}" data-label="${escapeHtml(type.label)}">${escapeHtml(type.label)}</button>${(index + 1) % 10 === 0 && index < expenseTypes.length - 1 ? `<span class="nature-break" aria-hidden="true"></span>` : ""}`).join("");
 }
@@ -397,10 +406,11 @@ function renderTotals() {
 }
 function render() {
   renderKnownPlaces();
+  renderContractSuggestions();
   renderMonthFilter();
   const rows = sortedFilteredExpenses();
   document.querySelector("#expenseCount").textContent = `${expenses.length} dépense${expenses.length > 1 ? "s" : ""}`;
-  body.innerHTML = rows.map(e => { const route = needsRouteFields(e.label), direction = e.routeDirection || "↔"; const firstField = route ? `<input class="cell-input route-input" data-field="departure" value="${escapeHtml(e.departure || "")}" placeholder="Départ" aria-label="Départ" list="knownPlaces" />` : `<input class="cell-input observations-input" data-field="observations" value="${escapeHtml(e.observations || "")}" aria-label="Observations" />`; return `<tr data-id="${e.id}"><td><strong class="order-number">${escapeHtml(e.order)}</strong></td><td><select class="cell-select contract-select" data-field="contract" aria-label="Contrat">${contractOptions(e.contract || "")}</select></td><td><select class="cell-select" data-field="label" aria-label="Libellé">${labelOptions(e.label)}</select></td><td><input class="cell-input amount" data-field="amount" inputmode="decimal" value="${escapeHtml(e.amount)}" aria-label="Montant TTC" ${e.label === "Kilométrage" ? "readonly title=\"Montant calculé à partir des kilomètres\"" : ""} /></td><td>${firstField}</td><td>${route ? `<select class="cell-select direction-select" data-field="routeDirection" aria-label="Sens du trajet"><option value="→" ${direction === "→" ? "selected" : ""}>⟶</option><option value="↔" ${direction === "↔" ? "selected" : ""}>⟷</option></select>` : ""}</td><td>${route ? `<input class="cell-input route-input" data-field="arrival" value="${escapeHtml(e.arrival || "")}" placeholder="Arrivée" aria-label="Arrivée" list="knownPlaces" />` : ""}</td><td>${e.label === "Kilométrage" ? `<input class="cell-input kilometer-recap" data-field="kilometres" inputmode="decimal" value="${escapeHtml(e.kilometres ?? "")}" placeholder="km" aria-label="Kilomètres" title="Modifier les kilomètres" />` : ""}</td><td><button class="delete-button" data-action="delete" aria-label="Supprimer ${escapeHtml(e.order)}" title="Supprimer">×</button></td></tr>`; }).join("");
+  body.innerHTML = rows.map(e => { const route = needsRouteFields(e.label), direction = e.routeDirection || "↔"; const firstField = route ? `<input class="cell-input route-input" data-field="departure" value="${escapeHtml(e.departure || "")}" placeholder="Départ" aria-label="Départ" list="knownPlaces" />` : `<input class="cell-input observations-input" data-field="observations" value="${escapeHtml(e.observations || "")}" aria-label="Observations" />`; return `<tr data-id="${e.id}"><td><strong class="order-number">${escapeHtml(e.order)}</strong></td><td><input class="cell-input contract-input" data-field="contract" list="contractSuggestions" value="${escapeHtml(e.contract || "")}" aria-label="Contrat" /></td><td><select class="cell-select" data-field="label" aria-label="Libellé">${labelOptions(e.label)}</select></td><td><input class="cell-input amount" data-field="amount" inputmode="decimal" value="${escapeHtml(e.amount)}" aria-label="Montant TTC" ${e.label === "Kilométrage" ? "readonly title=\"Montant calculé à partir des kilomètres\"" : ""} /></td><td>${firstField}</td><td>${route ? `<select class="cell-select direction-select" data-field="routeDirection" aria-label="Sens du trajet"><option value="→" ${direction === "→" ? "selected" : ""}>⟶</option><option value="↔" ${direction === "↔" ? "selected" : ""}>⟷</option></select>` : ""}</td><td>${route ? `<input class="cell-input route-input" data-field="arrival" value="${escapeHtml(e.arrival || "")}" placeholder="Arrivée" aria-label="Arrivée" list="knownPlaces" />` : ""}</td><td>${e.label === "Kilométrage" ? `<input class="cell-input kilometer-recap" data-field="kilometres" inputmode="decimal" value="${escapeHtml(e.kilometres ?? "")}" placeholder="km" aria-label="Kilomètres" title="Modifier les kilomètres" />` : ""}</td><td><button class="delete-button" data-action="delete" aria-label="Supprimer ${escapeHtml(e.order)}" title="Supprimer">×</button></td></tr>`; }).join("");
   body.querySelectorAll("tr").forEach(row => row.classList.toggle("scanlot-recent-import", recentScanLotImportIds.has(row.dataset.id)));
   if (emptyState) emptyState.hidden = rows.length !== 0; renderTotals(); renderPeriodFilter(); updateEntryAccess();
 }
@@ -409,6 +419,7 @@ function updateExpense(expense, field, value) {
   if (field === "amount") { const amount = amountNumber(value); if (!Number.isFinite(amount) || amount < 0) return false; expense.amount = amount.toFixed(2).replace(".", ","); }
   else if (field === "kilometres") { const kilometres = amountNumber(value), amount = calculatedMileageAmount(kilometres); if (!Number.isFinite(kilometres) || kilometres < 0 || !Number.isFinite(amount)) return false; expense.kilometres = kilometres; expense.amount = amount.toFixed(2).replace(".", ","); }
   else if (field === "label") { expense.label = value; expense.account = typeFor(value).account; }
+  else if (field === "contract") { const contract = value.trim().replace(/\s+/g, " "); expense.contract = contract; if (contract && !contracts.some(item => item.localeCompare(contract, "fr", { sensitivity: "accent" }) === 0)) { contracts.push(contract); contracts.sort((a, b) => a.localeCompare(b, "fr")); } }
   else expense[field] = value;
   return true;
 }
@@ -487,7 +498,7 @@ const sortRulesEl = document.querySelector("#sortRules");
 function renderSortRules() { sortRulesEl.innerHTML = sortRules.map((rule, index) => `<div class="sort-rule"><span class="rule-number">${index + 1}</span><select class="rule-select" data-sort-field="${index}">${fields.map(field => `<option value="${field.value}" ${field.value === rule.field ? "selected" : ""}>${field.label}</option>`).join("")}</select><select class="rule-select" data-sort-direction="${index}"><option value="asc" ${rule.direction === "asc" ? "selected" : ""}>Croissant</option><option value="desc" ${rule.direction === "desc" ? "selected" : ""}>Décroissant</option></select><button type="button" class="remove-rule" data-remove-rule="${index}" aria-label="Supprimer ce critère">×</button></div>`).join(""); }
 document.querySelector("#sortByMonthButton").addEventListener("click", () => { sortRules = [{ field: "date", direction: "asc" }, { field: "label", direction: "asc" }, { field: "order", direction: "asc" }]; render(); });
 document.querySelector("#sortByLabelButton").addEventListener("click", () => { sortRules = [{ field: "label", direction: "asc" }, { field: "date", direction: "asc" }, { field: "order", direction: "asc" }]; render(); });
-document.querySelector("#sortByContractButton").addEventListener("click", () => { sortRules = [{ field: "contract", direction: "asc" }, { field: "date", direction: "asc" }, { field: "order", direction: "asc" }]; render(); });
+document.querySelector("#sortByContractButton").addEventListener("click", () => { sortRules = [{ field: "contract", direction: "desc" }, { field: "date", direction: "asc" }, { field: "order", direction: "asc" }]; render(); });
 document.querySelector("#addSortRule").addEventListener("click", () => { sortRules.push({ field: "order", direction: "asc" }); renderSortRules(); });
 sortRulesEl.addEventListener("change", event => { const index = event.target.dataset.sortField ?? event.target.dataset.sortDirection; if (index !== undefined) sortRules[index][event.target.dataset.sortField !== undefined ? "field" : "direction"] = event.target.value; });
 sortRulesEl.addEventListener("click", event => { const index = event.target.dataset.removeRule; if (index !== undefined && sortRules.length > 1) { sortRules.splice(index, 1); renderSortRules(); } });
@@ -580,11 +591,6 @@ document.querySelector("#backupButton").addEventListener("click", async () => {
   if (!personName) { alert("Choisissez d’abord « Nouveau nom » ou restaurez un fichier maître."); return; }
   if (masterBackup && masterBackup.ownerName && masterBackup.ownerName !== personName) { alert("Cliquez sur « Nouvelle personne » avant de commencer une comptabilité différente."); return; }
   if (!masterBackup) masterBackup = newMaster();
-  masterBackup.ownerName = personName;
-  masterBackup.expenseTypes = cloneExpenseTypes(expenseTypes); masterBackup.contracts = cloneContracts();
-  // Les anciens fichiers à plusieurs liasses sont conservés à la lecture, puis
-  // réunis en une seule liste continue lors de leur prochaine sauvegarde.
-  masterBackup.bundles = [{ id: masterBackup.bundles[0]?.id || crypto.randomUUID(), savedAt: new Date().toISOString(), expenses, sequences }];
   if (await saveMaster()) markSaved();
 });
 document.querySelector("#newPersonButton").addEventListener("click", async () => {
