@@ -107,6 +107,19 @@ function provisionalMileageAllowance(kilometres) {
   if (kilometres <= 20000) return kilometres * from5001 + constant;
   return kilometres * over20000;
 }
+function mileageAllowanceByExpense(items) {
+  const mileageExpenses = items.filter(expense => expense.label === "Kilométrage" && amountNumber(expense.kilometres || 0) > 0).sort((a, b) => a.id.localeCompare(b.id));
+  const totalKilometres = mileageExpenses.reduce((sum, expense) => sum + amountNumber(expense.kilometres), 0);
+  const allowance = provisionalMileageAllowance(totalKilometres), amounts = new Map();
+  let assigned = 0;
+  mileageExpenses.forEach((expense, index) => {
+    const amount = index === mileageExpenses.length - 1 ? allowance - assigned : Math.round((allowance * amountNumber(expense.kilometres) / totalKilometres) * 100) / 100;
+    amounts.set(expense.id, amount); assigned += amount;
+  });
+  return amounts;
+}
+function displayedAmount(expense, mileageAmounts) { return expense.label === "Kilométrage" ? mileageAmounts.get(expense.id) || 0 : amountNumber(expense.amount); }
+function formattedAmount(amount) { return Number(amount).toFixed(2).replace(".", ","); }
 function updateExpenseInputMode() {
   const mileage = isMileageExpense();
   amountLabel.textContent = mileage ? "Kilomètres" : "Montant TTC";
@@ -410,11 +423,9 @@ function renderContractList() {
 }
 function renderTotals() {
   const periodExpenses = expenses.filter(expense => isInSelectedPeriod(expense) && matchesMonthFilter(expense));
-  const recordedTotal = periodExpenses.reduce((sum, expense) => sum + amountNumber(expense.amount), 0);
+  const mileageAmounts = mileageAllowanceByExpense(periodExpenses);
+  const total = periodExpenses.reduce((sum, expense) => sum + displayedAmount(expense, mileageAmounts), 0);
   const kilometres = periodExpenses.filter(expense => expense.label === "Kilométrage").reduce((sum, expense) => sum + amountNumber(expense.kilometres || 0), 0);
-  const recordedMileageAmount = periodExpenses.filter(expense => expense.label === "Kilométrage").reduce((sum, expense) => sum + amountNumber(expense.amount), 0);
-  const mileageAllowance = provisionalMileageAllowance(kilometres);
-  const total = recordedTotal - recordedMileageAmount + mileageAllowance;
   const primarySort = sortRules[0]?.field;
   const groupByMonth = primarySort === "month";
   document.querySelector("#grandTotal").textContent = euro(total);
@@ -425,9 +436,8 @@ function renderTotals() {
   // L'ordre d'apparition des groupes suit le tri actif du tableau.
   const sums = new Map(); sortedFilteredExpenses().forEach(e => {
     const key = groupByMonth ? monthName(e.date) : primarySort === "contract" ? (e.contract || "Sans contrat") : e.label;
-    sums.set(key, (sums.get(key) || 0) + amountNumber(e.amount));
+    sums.set(key, (sums.get(key) || 0) + displayedAmount(e, mileageAmounts));
   });
-  if (!groupByMonth && primarySort !== "contract" && kilometres) sums.set("Kilométrage", mileageAllowance);
   document.querySelector("#labelTotals").innerHTML = sums.size
     ? [...sums.entries()].map(([label, total], index) => `<span>${escapeHtml(label)} <b>${euro(total)}</b></span>${(index + 1) % 7 === 0 && index < sums.size - 1 ? `<span class="breakdown-break" aria-hidden="true"></span>` : ""}`).join("")
     : "<span>Les totaux apparaîtront ici.</span>";
@@ -437,9 +447,10 @@ function render() {
   renderContractSuggestions();
   renderMonthFilter();
   const rows = sortedFilteredExpenses();
+  const mileageAmounts = mileageAllowanceByExpense(rows);
   document.querySelector("#expenseCount").textContent = `${expenses.length} dépense${expenses.length > 1 ? "s" : ""}`;
   body.innerHTML = rows.map(e => { const route = needsRouteFields(e.label), direction = e.routeDirection || "↔"; const firstField = route ? `<input class="cell-input route-input" data-field="departure" value="${escapeHtml(e.departure || "")}" placeholder="Départ" aria-label="Départ" list="knownPlaces" />` : `<input class="cell-input observations-input" data-field="observations" value="${escapeHtml(e.observations || "")}" aria-label="Observations" />`; const dateField = `<label class="expense-date-cell"><span>${escapeHtml(displayDate(e.date))}</span><input class="expense-date-input" data-field="date" type="date" value="${escapeHtml(e.date)}" aria-label="Date de la dépense" /></label>`; return `<tr data-id="${e.id}"><td><strong class="order-number">${escapeHtml(e.order)}</strong></td><td>${dateField}</td><td><select class="cell-select" data-field="label" aria-label="Libellé">${labelOptions(e.label)}</select></td><td><input class="cell-input amount" data-field="amount" inputmode="decimal" value="${escapeHtml(e.amount)}" aria-label="Montant TTC" ${e.label === "Kilométrage" ? "readonly title=\"Montant calculé à partir des kilomètres\"" : ""} /></td><td>${firstField}</td><td>${route ? `<select class="cell-select direction-select" data-field="routeDirection" aria-label="Sens du trajet"><option value="" ${!e.routeDirection ? "selected" : ""}>—</option><option value="→" ${direction === "→" ? "selected" : ""}>⟶</option><option value="↔" ${direction === "↔" ? "selected" : ""}>⟷</option></select>` : ""}</td><td>${route ? `<input class="cell-input route-input" data-field="arrival" value="${escapeHtml(e.arrival || "")}" placeholder="Arrivée" aria-label="Arrivée" list="knownPlaces" />` : ""}</td><td>${e.label === "Kilométrage" ? `<input class="cell-input kilometer-recap" data-field="kilometres" inputmode="decimal" value="${escapeHtml(e.kilometres ?? "")}" placeholder="km" aria-label="Kilomètres" title="Modifier les kilomètres" />` : ""}</td><td><input class="cell-input contract-input" data-field="contract" list="contractSuggestions" value="${escapeHtml(e.contract || "")}" aria-label="Contrat" /></td><td><button class="delete-button" data-action="delete" aria-label="Supprimer ${escapeHtml(e.order)}" title="Supprimer">×</button></td></tr>`; }).join("");
-  body.querySelectorAll("tr").forEach(row => row.classList.toggle("scanlot-recent-import", recentScanLotImportIds.has(row.dataset.id)));
+  body.querySelectorAll("tr").forEach(row => { const expense = getExpense(row.dataset.id); row.classList.toggle("scanlot-recent-import", recentScanLotImportIds.has(row.dataset.id)); if (expense?.label === "Kilométrage") row.querySelector('[data-field="amount"]').value = formattedAmount(displayedAmount(expense, mileageAmounts)); });
   body.querySelectorAll('.direction-select option[value="→"]').forEach(option => { option.textContent = "--->"; });
   body.querySelectorAll('.direction-select option[value="↔"]').forEach(option => { option.textContent = "<--->"; });
   if (emptyState) emptyState.hidden = rows.length !== 0; renderTotals(); renderPeriodFilter(); updateEntryAccess();
@@ -545,23 +556,24 @@ sortRulesEl.addEventListener("click", event => { const index = event.target.data
 document.querySelector("#applySort").addEventListener("click", render);
 function csvValue(value) { return `"${String(value ?? "").replaceAll('"', '""')}"`; }
 function csvTotals(expensesToSummarize) {
-  const total = expensesToSummarize.reduce((sum, expense) => sum + amountNumber(expense.amount), 0);
+  const mileageAmounts = mileageAllowanceByExpense(expensesToSummarize);
+  const total = expensesToSummarize.reduce((sum, expense) => sum + displayedAmount(expense, mileageAmounts), 0);
   const kilometres = expensesToSummarize.filter(expense => expense.label === "Kilométrage").reduce((sum, expense) => sum + amountNumber(expense.kilometres || 0), 0);
   const totalsByLabel = new Map();
-  expensesToSummarize.forEach(expense => totalsByLabel.set(expense.label, (totalsByLabel.get(expense.label) || 0) + amountNumber(expense.amount)));
-  return { total, kilometres, totalsByLabel };
+  expensesToSummarize.forEach(expense => totalsByLabel.set(expense.label, (totalsByLabel.get(expense.label) || 0) + displayedAmount(expense, mileageAmounts)));
+  return { total, kilometres, totalsByLabel, mileageAmounts };
 }
 async function exportCsv() {
   const headers = ["N° d’ordre", "Contrat", "Date", "Libellé", "N° compte comptable", "Montant TTC", "Départ / observations", "Sens", "Arrivée", "Kilomètres"];
   const byMonthThenDate = expenses.filter(isInSelectedPeriod).sort((a, b) => a.date.localeCompare(b.date) || a.order.localeCompare(b.order, "fr", { numeric: true }));
-  const { total, kilometres, totalsByLabel } = csvTotals(byMonthThenDate);
+  const { total, kilometres, totalsByLabel, mileageAmounts } = csvTotals(byMonthThenDate);
   const summaryRows = [
     [],
     ["Récapitulatif", "", "", "", "", "Montant TTC", "", "", "", "Kilomètres"],
     ["Total général", "", "", "", "", total.toFixed(2).replace(".", ","), "", "", "", kilometres || ""],
     ...[...totalsByLabel.entries()].map(([label, amount]) => [`Total ${label}`, "", "", "", "", amount.toFixed(2).replace(".", ","), "", "", "", ""])
   ];
-  const csv = [headers, ...byMonthThenDate.map(e => [e.order, e.contract, displayDate(e.date), e.label, e.account, e.amount, e.departure || e.observations, e.routeDirection === "none" ? "" : e.routeDirection, e.arrival, e.kilometres]), ...summaryRows].map(row => row.map(csvValue).join(";")).join("\r\n");
+  const csv = [headers, ...byMonthThenDate.map(e => [e.order, e.contract, displayDate(e.date), e.label, e.account, formattedAmount(displayedAmount(e, mileageAmounts)), e.departure || e.observations, e.routeDirection === "none" ? "" : e.routeDirection, e.arrival, e.kilometres]), ...summaryRows].map(row => row.map(csvValue).join(";")).join("\r\n");
   const content = "\uFEFF" + csv;
   if (csvFolderHandle) {
     if (!await canWriteFolder(csvFolderHandle, true)) { alert("L’autorisation du dossier CSV n’est plus valide. Sélectionnez-le à nouveau dans Paramètres."); return false; }
