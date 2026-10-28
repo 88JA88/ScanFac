@@ -86,11 +86,8 @@ function updateEntryAccess() { const locked = !masterBackup; expenseForm.querySe
 document.querySelector("#guideButton").addEventListener("click", () => guideDialog.showModal());
 function markUnsaved() { hasUnsavedChanges = true; unsavedNotice.hidden = false; document.querySelector("#backupButton").classList.add("needs-save"); }
 function markSaved() { hasUnsavedChanges = false; unsavedNotice.hidden = true; document.querySelector("#backupButton").classList.remove("needs-save"); }
-function currentMonthValue() { return new Date().toLocaleDateString("en-CA").slice(0, 7); }
-function renderMonthOptions() {
-  const year = currentMonthValue().slice(0, 4);
-  dateInput.innerHTML = monthLabels.map((label, index) => `<option value="${year}-${String(index + 1).padStart(2, "0")}">${label}</option>`).join("");
-}
+function currentDateValue() { const now = new Date(); return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`; }
+function currentMonthValue() { return currentDateValue().slice(0, 7); }
 function escapeHtml(value = "") { return String(value).replace(/[&<>'"]/g, char => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", "'":"&#39;", '"':"&quot;" })[char]); }
 function amountNumber(value) { return Number(String(value).trim().replace(/\s/g, "").replace(",", ".")); }
 function isMileageExpense() { return selectedLabel === "Kilométrage"; }
@@ -162,7 +159,7 @@ function parseCsv(content) {
   if (field || row.length) { row.push(field.replace(/\r$/, "")); rows.push(row); }
   return rows.filter(line => line.some(value => String(value).trim()));
 }
-function scanLotMonthValue(monthName) { return [...dateInput.options].find(option => normalizedText(option.textContent) === normalizedText(monthName))?.value || ""; }
+function scanLotMonthValue(monthName) { const index = monthLabels.findIndex(label => normalizedText(label) === normalizedText(monthName)); return index < 0 ? "" : `${currentDateValue().slice(0, 4)}-${String(index + 1).padStart(2, "0")}`; }
 function parseScanLotRows(content) {
   const rows = parseCsv(content.replace(/^\uFEFF/, ""));
   if (!rows.length) throw new Error("fichier vide");
@@ -487,7 +484,7 @@ document.querySelector("#expenseForm").addEventListener("submit", event => {
   const type = typeFor(selectedLabel);
   const calculatedAmount = isMileageExpense() ? calculatedMileageAmount(amount) : amount;
   if (!Number.isFinite(calculatedAmount)) { alert("Le coefficient kilométrique actif est invalide. Vérifiez les Paramètres."); return; }
-  expenses.push({ id: crypto.randomUUID(), order: nextOrder(dateInput.value), date: `${dateInput.value}-01`, label: type.label, account: type.account, amount: calculatedAmount.toFixed(2).replace(".", ","), kilometres: isMileageExpense() ? amount : undefined, routeDirection: needsRouteFields() ? "↔" : undefined });
+  expenses.push({ id: crypto.randomUUID(), order: nextOrder(dateInput.value), date: dateInput.value, label: type.label, account: type.account, amount: calculatedAmount.toFixed(2).replace(".", ","), kilometres: isMileageExpense() ? amount : undefined, routeDirection: needsRouteFields() ? "↔" : undefined });
   recentScanLotImportIds.clear(); markUnsaved(); selectedLabel = ""; amountInput.value = ""; amountInput.setCustomValidity(""); renderNatureList(); updateExpenseInputMode(); render(); amountInput.focus();
 });
 body.addEventListener("change", event => {
@@ -518,7 +515,7 @@ function renderSortRules() { sortRulesEl.innerHTML = sortRules.map((rule, index)
 document.querySelector("#sortByMonthButton").addEventListener("click", () => { sortRules = [{ field: "month", direction: "desc" }, { field: "label", direction: "asc" }, { field: "date", direction: "desc" }, { field: "order", direction: "asc" }]; render(); });
 document.querySelector("#sortByLabelButton").addEventListener("click", () => { sortRules = [{ field: "label", direction: "asc" }, { field: "month", direction: "desc" }, { field: "date", direction: "desc" }, { field: "order", direction: "asc" }]; render(); });
 document.querySelector("#sortByContractButton").addEventListener("click", () => { sortRules = [{ field: "contract", direction: "desc" }, { field: "date", direction: "desc" }, { field: "order", direction: "asc" }]; render(); });
-document.querySelector("#sortByDateDepartureButton").addEventListener("click", () => { sortRules = [{ field: "date", direction: "desc" }, { field: "order", direction: "asc" }, { field: "label", direction: "asc" }, { field: "departure", direction: "asc" }]; render(); });
+document.querySelector("#sortByDateDepartureButton").addEventListener("click", () => { sortRules = [{ field: "date", direction: "desc" }, { field: "label", direction: "asc" }, { field: "departure", direction: "asc" }, { field: "order", direction: "asc" }]; render(); });
 document.querySelector("#addSortRule").addEventListener("click", () => { sortRules.push({ field: "order", direction: "asc" }); renderSortRules(); });
 sortRulesEl.addEventListener("change", event => { const index = event.target.dataset.sortField ?? event.target.dataset.sortDirection; if (index !== undefined) sortRules[index][event.target.dataset.sortField !== undefined ? "field" : "direction"] = event.target.value; });
 sortRulesEl.addEventListener("click", event => { const index = event.target.dataset.removeRule; if (index !== undefined && sortRules.length > 1) { sortRules.splice(index, 1); renderSortRules(); } });
@@ -703,4 +700,4 @@ storedHandle(CSV_FOLDER_KEY).then(handle => { csvFolderHandle = handle; renderFo
 storedHandle(SCANLOT_FOLDER_KEY).then(async handle => { scanLotFolderHandle = handle; renderFolderSummary(); await refreshScanLotCsvList(); });
 window.addEventListener("beforeunload", event => { if (!hasUnsavedChanges) return; event.preventDefault(); event.returnValue = ""; });
 if ("serviceWorker" in navigator && location.protocol !== "file:") window.addEventListener("load", () => navigator.serviceWorker.register("service-worker.js?v=28").catch(() => {}));
-renderPerson(); renderFolderSummary(); renderMonthOptions(); dateInput.value = currentMonthValue(); renderNatureList(); updateExpenseInputMode(); render();
+renderPerson(); renderFolderSummary(); dateInput.value = currentDateValue(); renderNatureList(); updateExpenseInputMode(); render();

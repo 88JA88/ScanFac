@@ -73,6 +73,8 @@ html,body { min-width:1360px; }.app-shell { width:1360px; min-width:1360px; max-
 .table-wrap .direction-select { width:68px; height:24px; padding:0; border:0; border-radius:0; background:transparent; color:var(--teal-dark); font-size:1.55rem; font-weight:900; line-height:1; }
 .table-wrap .direction-select:hover,.table-wrap .direction-select:focus { background:transparent; border:0; color:#b23d35; outline:none; }
 .table-wrap .direction-select { width:58px; height:18px; font-size:.78rem; font-weight:700; }
+.expense-form { grid-template-columns:129px 105px max-content; }
+.date-field { width:129px; }
 .table-wrap th:nth-child(2),.table-wrap td:nth-child(2) { width:110px; }
 .table-wrap th:nth-child(3),.table-wrap td:nth-child(3) { width:150px; }
 .table-wrap th:nth-child(4),.table-wrap td:nth-child(4) { width:110px; }
