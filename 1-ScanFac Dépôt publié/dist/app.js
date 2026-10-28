@@ -62,6 +62,7 @@ const hoverTips = {
   openMasterButton: "Ouvre un fichier maître ScanFac existant."
 };
 Object.entries(hoverTips).forEach(([id, text]) => { const element = document.querySelector(`#${id}`); if (element) { element.dataset.tooltip = text; element.removeAttribute("title"); } });
+document.querySelector(".app-name").textContent = "ScanFac";
 const fromMonth = document.querySelector("#fromMonth");
 const toMonth = document.querySelector("#toMonth");
 const periodFilter = document.querySelector("#periodFilter");

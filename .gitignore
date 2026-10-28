@@ -4,3 +4,6 @@ dist/.DS_Store
 scanfac-*.json
 scanfac-*.csv
 *.xlsx
+*.fmp12
+/2-ScanFac*/
+/z-ScanFac*/
