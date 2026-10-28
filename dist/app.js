@@ -97,8 +97,15 @@ function needsRouteFields(label = selectedLabel) { return label === "Kilométrag
 function calculatedMileageAmount(kilometres) {
   const row = mileageParameters.kilometrage?.[Number(mileageParameters.activePowerIndex || 0)];
   if (!Number.isFinite(kilometres) || kilometres < 0 || !row) return NaN;
-  const field = mileageParameters.mileageTier === "over20000" ? "auDela20000" : mileageParameters.mileageTier === "from5001" ? "coefficient" : "jusqua5000";
-  const coefficient = amountNumber(row[field]); return Number.isFinite(coefficient) ? kilometres * coefficient : NaN;
+  const coefficient = amountNumber(row.jusqua5000); return Number.isFinite(coefficient) ? kilometres * coefficient : NaN;
+}
+function provisionalMileageAllowance(kilometres) {
+  const row = mileageParameters.kilometrage?.[Number(mileageParameters.activePowerIndex || 0)];
+  if (!Number.isFinite(kilometres) || kilometres < 0 || !row) return 0;
+  const under5000 = amountNumber(row.jusqua5000), from5001 = amountNumber(row.coefficient), constant = amountNumber(row.constante), over20000 = amountNumber(row.auDela20000);
+  if (kilometres <= 5000) return kilometres * under5000;
+  if (kilometres <= 20000) return kilometres * from5001 + constant;
+  return kilometres * over20000;
 }
 function updateExpenseInputMode() {
   const mileage = isMileageExpense();
@@ -284,6 +291,7 @@ function validMileageParameters(data) { return data?.format === "scanfac-paramet
 function pendingMileageParameters() { try { const data = JSON.parse(localStorage.getItem(PENDING_PARAMETERS_KEY) || "null"); return validMileageParameters(data) ? data : null; } catch { return null; } }
 function applyPendingMileageParameters() { const pending = pendingMileageParameters(); if (!pending) return; mileageParameters = pending; document.querySelector("#accountantEmail").value = pending.accountantEmail || ""; updateExpenseInputMode(); }
 async function saveMileageParameters() { if (!dataFolderHandle) return true; try { await writeToFolder(dataFolderHandle, "scanfac-parametres.json", JSON.stringify(mileageParameters, null, 2), "application/json"); localStorage.removeItem(PENDING_PARAMETERS_KEY); return true; } catch { alert("Impossible de sauvegarder les paramètres."); return false; } }
+window.addEventListener("storage", event => { if (event.key !== PENDING_PARAMETERS_KEY || !pendingMileageParameters()) return; applyPendingMileageParameters(); markUnsaved(); render(); });
 function synchronizeMaster() {
   if (!masterBackup) return;
   applyPendingMileageParameters();
@@ -402,8 +410,11 @@ function renderContractList() {
 }
 function renderTotals() {
   const periodExpenses = expenses.filter(expense => isInSelectedPeriod(expense) && matchesMonthFilter(expense));
-  const total = periodExpenses.reduce((sum, expense) => sum + amountNumber(expense.amount), 0);
+  const recordedTotal = periodExpenses.reduce((sum, expense) => sum + amountNumber(expense.amount), 0);
   const kilometres = periodExpenses.filter(expense => expense.label === "Kilométrage").reduce((sum, expense) => sum + amountNumber(expense.kilometres || 0), 0);
+  const recordedMileageAmount = periodExpenses.filter(expense => expense.label === "Kilométrage").reduce((sum, expense) => sum + amountNumber(expense.amount), 0);
+  const mileageAllowance = provisionalMileageAllowance(kilometres);
+  const total = recordedTotal - recordedMileageAmount + mileageAllowance;
   const primarySort = sortRules[0]?.field;
   const groupByMonth = primarySort === "month";
   document.querySelector("#grandTotal").textContent = euro(total);
@@ -416,6 +427,7 @@ function renderTotals() {
     const key = groupByMonth ? monthName(e.date) : primarySort === "contract" ? (e.contract || "Sans contrat") : e.label;
     sums.set(key, (sums.get(key) || 0) + amountNumber(e.amount));
   });
+  if (!groupByMonth && primarySort !== "contract" && kilometres) sums.set("Kilométrage", mileageAllowance);
   document.querySelector("#labelTotals").innerHTML = sums.size
     ? [...sums.entries()].map(([label, total], index) => `<span>${escapeHtml(label)} <b>${euro(total)}</b></span>${(index + 1) % 7 === 0 && index < sums.size - 1 ? `<span class="breakdown-break" aria-hidden="true"></span>` : ""}`).join("")
     : "<span>Les totaux apparaîtront ici.</span>";

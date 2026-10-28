@@ -5,7 +5,6 @@ const body = document.querySelector("#kilometrageBody");
 const status = document.querySelector("#saveStatus");
 const accountantEmailInput = document.querySelector("#accountantEmailSetting");
 const editParametersButton = document.querySelector("#editParameters");
-const mileageTierInputs = [...document.querySelectorAll(".mileage-tier")];
 const workFolderName = document.querySelector("#workFolderName");
 const backupFolderName = document.querySelector("#backupFolderName");
 const csvFolderName = document.querySelector("#csvFolderName");
@@ -18,7 +17,6 @@ const escapeHtml = value => String(value ?? "").replace(/[&<>'"]/g, char => ({ "
 
 function render() {
   accountantEmailInput.value = parameters.accountantEmail || "";
-  mileageTierInputs.forEach(input => { input.checked = input.value === (parameters.mileageTier || "under5000"); });
   body.innerHTML = parameters.kilometrage.map((row, index) => `<tr><td><input class="active-power" type="radio" name="activePower" value="${index}" ${index === Number(parameters.activePowerIndex || 0) ? "checked" : ""} aria-label="Utiliser ${escapeHtml(row.puissance)}" /></td>${fields.map(field => `<td>${field === "puissance" || !editingParameters ? escapeHtml(row[field]) : `<input data-row="${index}" data-field="${field}" value="${escapeHtml(row[field])}" aria-label="${field}" />`}</td>`).join("")}</tr>`).join("");
   editParametersButton.textContent = editingParameters ? "Valider" : "Modifier les coefficients";
 }
@@ -52,7 +50,6 @@ function markParametersPending(message = "Paramètres à sauvegarder dans la fen
 body.addEventListener("input", event => { const input = event.target; if (input.dataset.row === undefined || !input.dataset.field) return; parameters.kilometrage[Number(input.dataset.row)][input.dataset.field] = input.value; markParametersPending(); });
 body.addEventListener("change", event => { const input = event.target; if (!input.matches(".active-power")) return; parameters.activePowerIndex = Number(input.value); markParametersPending(); });
 accountantEmailInput.addEventListener("input", () => { parameters.accountantEmail = accountantEmailInput.value.trim(); markParametersPending(); });
-mileageTierInputs.forEach(input => input.addEventListener("change", () => { parameters.mileageTier = input.value; markParametersPending(); }));
 editParametersButton.addEventListener("click", () => { editingParameters = !editingParameters; render(); status.textContent = editingParameters ? "Modifiez les coefficients, puis cliquez sur « Valider » et sauvegardez depuis la fenêtre de travail." : "Modifications prêtes à sauvegarder dans la fenêtre de travail."; });
 document.querySelector("#chooseWorkFolder").addEventListener("click", () => chooseFolder(WORK_FOLDER_KEY, "Travail"));
 document.querySelector("#chooseBackupFolder").addEventListener("click", () => chooseFolder(BACKUP_FOLDER_KEY, "Sauvegardes"));
