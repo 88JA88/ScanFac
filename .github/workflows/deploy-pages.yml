@@ -24,9 +24,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
       - name: Appliquer la version de publication
-        run: node "1-ScanFac Dépôt publié/scripts/set-version.mjs"
+        run: node "$(find . -path '*/scripts/set-version.mjs' -type f -print -quit)"
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: "./1-ScanFac Dépôt publié/dist"
+          path: ./1-ScanFac*/dist
       - id: deployment
         uses: actions/deploy-pages@v4
