@@ -76,6 +76,7 @@ const BACKUP_FOLDER_KEY = "backup-folder";
 const CSV_FOLDER_KEY = "csv-folder";
 const SCANLOT_FOLDER_KEY = "scanlot-import-folder";
 const LAST_MASTER_FILE_KEY = "scanfac-last-master-file";
+const PENDING_PARAMETERS_KEY = "scanfac-pending-parameters";
 function rememberLastMasterFile(name) { try { if (name) localStorage.setItem(LAST_MASTER_FILE_KEY, name); } catch { /* Mémoire locale indisponible. */ } }
 function lastMasterFileName() { try { return localStorage.getItem(LAST_MASTER_FILE_KEY) || ""; } catch { return ""; } }
 function forgetLastMasterFile() { try { localStorage.removeItem(LAST_MASTER_FILE_KEY); } catch { /* Mémoire locale indisponible. */ } }
@@ -268,6 +269,8 @@ async function refreshMasterList(folder = dataFolderHandle) {
   } catch { masterSelect.disabled = true; masterSelect.classList.remove("needs-permission"); }
 }
 async function loadMileageParameters(folder) {
+  const pending = pendingMileageParameters();
+  if (pending) { mileageParameters = pending; document.querySelector("#accountantEmail").value = pending.accountantEmail || ""; updateExpenseInputMode(); return; }
   try {
     if (!folder || await folder.queryPermission({ mode: "read" }) !== "granted") return;
     const file = await folder.getFileHandle("scanfac-parametres.json");
@@ -276,11 +279,17 @@ async function loadMileageParameters(folder) {
   } catch { /* Les valeurs intégrées restent utilisées tant que les paramètres ne sont pas disponibles. */ }
   updateExpenseInputMode();
 }
+function validMileageParameters(data) { return data?.format === "scanfac-parametres" && Array.isArray(data.kilometrage); }
+function pendingMileageParameters() { try { const data = JSON.parse(localStorage.getItem(PENDING_PARAMETERS_KEY) || "null"); return validMileageParameters(data) ? data : null; } catch { return null; } }
+function applyPendingMileageParameters() { const pending = pendingMileageParameters(); if (!pending) return; mileageParameters = pending; document.querySelector("#accountantEmail").value = pending.accountantEmail || ""; updateExpenseInputMode(); }
+async function saveMileageParameters() { if (!dataFolderHandle) return true; try { await writeToFolder(dataFolderHandle, "scanfac-parametres.json", JSON.stringify(mileageParameters, null, 2), "application/json"); localStorage.removeItem(PENDING_PARAMETERS_KEY); return true; } catch { alert("Impossible de sauvegarder les paramètres."); return false; } }
 function synchronizeMaster() {
   if (!masterBackup) return;
+  applyPendingMileageParameters();
   masterBackup.ownerName = personName;
   masterBackup.expenseTypes = cloneExpenseTypes(expenseTypes);
   masterBackup.contracts = cloneContracts();
+  masterBackup.parameters = mileageParameters;
   masterBackup.bundles = [{ id: masterBackup.bundles[0]?.id || crypto.randomUUID(), savedAt: new Date().toISOString(), expenses, sequences }];
 }
 async function exportJson() { synchronizeMaster(); const content = JSON.stringify(masterBackup, null, 2), fileName = backupFileName(), folder = backupFolderHandle || dataFolderHandle; if (folder) { if (!await canWriteFolder(folder, true)) { alert(`L’autorisation du dossier ${backupFolderHandle ? "Sauvegardes" : "Travail"} n’est plus valide. Sélectionnez-le à nouveau dans Paramètres.`); return false; } await writeToFolder(folder, fileName, content, "application/json"); return true; } downloadFile(content, "application/json", fileName); return true; }
@@ -291,7 +300,7 @@ async function saveMaster(createOnly = false) {
   if (!dataFolderHandle && "showDirectoryPicker" in window && !await chooseDataFolder()) return false;
   if (dataFolderHandle && await canWriteFolder(dataFolderHandle, true)) {
     if (createOnly) { try { await dataFolderHandle.getFileHandle(masterFileName()); alert(`Un fichier existe déjà pour « ${personName} ». Choisissez un autre nom ou restaurez ce fichier.`); return false; } catch (error) { if (error.name !== "NotFoundError") { alert("Impossible de vérifier le dossier Travail."); return false; } } }
-    masterFileHandle = await writeToFolder(dataFolderHandle, masterFileName(), JSON.stringify(masterBackup, null, 2), "application/json"); rememberLastMasterFile(masterFileHandle.name); await refreshMasterList(); masterSelect.value = masterFileName(); updateEntryAccess(); return true;
+    masterFileHandle = await writeToFolder(dataFolderHandle, masterFileName(), JSON.stringify(masterBackup, null, 2), "application/json"); if (!await saveMileageParameters()) return false; rememberLastMasterFile(masterFileHandle.name); await refreshMasterList(); masterSelect.value = masterFileName(); updateEntryAccess(); return true;
   }
   if (dataFolderHandle) { alert("L’autorisation du dossier Travail n’est plus valide. Sélectionnez-le à nouveau dans Paramètres."); return false; }
   if (!("showSaveFilePicker" in window)) {
@@ -329,9 +338,10 @@ async function applyMasterFile(file, handle = null) {
   if (!validMaster(backup)) throw new Error("invalid");
   const migrated = migrateRestaurantToReception(backup);
   masterBackup = backup; masterFileHandle = handle; if (handle?.name) rememberLastMasterFile(handle.name); personName = backup.ownerName || "";
+  if (validMileageParameters(backup.parameters) && !pendingMileageParameters()) { mileageParameters = backup.parameters; document.querySelector("#accountantEmail").value = mileageParameters.accountantEmail || ""; }
   expenses = masterExpenses(backup); sequences = masterSequences(backup, expenses); expenseTypes = validExpenseTypes(backup.expenseTypes) ? cloneExpenseTypes(backup.expenseTypes) : cloneExpenseTypes(); contracts = validContracts(backup.contracts) ? cloneContracts(backup.contracts) : []; selectedLabel = "";
   monthRange = { from: "", to: "" }; monthFilterState = { operator: "=", value: "" }; accountantMode = false;
-  if (migrated) markUnsaved(); else markSaved(); renderPerson(); renderNatureList(); render();
+  if (migrated || pendingMileageParameters()) markUnsaved(); else markSaved(); renderPerson(); renderNatureList(); render();
 }
 function isInSelectedPeriod(expense) { const month = monthOf(expense.date); return !accountantMode || ((!monthRange.from || month >= monthRange.from) && (!monthRange.to || month <= monthRange.to)); }
 function matchesMonthFilter(expense) {
@@ -604,7 +614,7 @@ scanLotCsvList.addEventListener("click", async event => {
 scanLotImportInput.addEventListener("change", async event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) await importScanLotCsv(file); });
 scanLotHistoryButton.addEventListener("click", () => { renderScanLotImportHistory(); scanLotHistoryDialog.showModal(); });
 document.querySelector("#backupButton").addEventListener("click", async () => {
-  if (!expenses.length && !hasUnsavedChanges) { alert("Ajoutez une dépense ou modifiez les natures de frais avant de sauvegarder."); return; }
+  if (!expenses.length && !hasUnsavedChanges && !pendingMileageParameters()) { alert("Ajoutez une dépense ou modifiez les natures de frais avant de sauvegarder."); return; }
   if (!personName) { alert("Choisissez d’abord « Nouveau nom » ou restaurez un fichier maître."); return; }
   if (masterBackup && masterBackup.ownerName && masterBackup.ownerName !== personName) { alert("Cliquez sur « Nouvelle personne » avant de commencer une comptabilité différente."); return; }
   if (!masterBackup) masterBackup = newMaster();
