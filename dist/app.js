@@ -118,7 +118,10 @@ function nextOrder(date) {
   sequences[month] = Math.max(sequences[month] || 0, ...existing) + 1;
   return `${month}-${String(sequences[month]).padStart(3, "0")}`;
 }
-function normalizedExpenses(items) { return items.map(expense => ({ ...expense, date: expense.date?.slice(0, 7) || currentMonthValue() })); }
+function normalizedExpenseDate(value) { return /^\d{4}-\d{2}-\d{2}$/.test(value || "") ? value : /^\d{4}-\d{2}$/.test(value || "") ? `${value}-01` : `${currentMonthValue()}-01`; }
+function monthOf(value) { return normalizedExpenseDate(value).slice(0, 7); }
+function displayDate(value) { const [year, month, day] = normalizedExpenseDate(value).split("-"); return `${Number(day)} ${["Jan.", "Fév.", "Mars", "Avr.", "Mai", "Juin", "Juil.", "Août", "Sept.", "Oct.", "Nov.", "Déc."][Number(month) - 1]} ${year}`; }
+function normalizedExpenses(items) { return items.map(expense => ({ ...expense, date: normalizedExpenseDate(expense.date), routeDirection: expense.routeDirection ?? (needsRouteFields(expense.label) ? "↔" : undefined) })); }
 function validExpenseTypes(types) { return Array.isArray(types) && types.length > 0 && types.every(type => typeof type?.label === "string" && type.label.trim()) && new Set(types.map(type => type.label.trim().toLocaleLowerCase("fr-FR"))).size === types.length; }
 function cloneExpenseTypes(types = defaultExpenseTypes) { return types.map(type => ({ label: type.label.trim(), account: String(type.account || "").trim() })); }
 function validContracts(items) { return Array.isArray(items) && items.every(item => typeof item === "string" && item.trim()) && new Set(items.map(item => item.trim().toLocaleLowerCase("fr-FR"))).size === items.length; }
@@ -333,12 +336,12 @@ async function applyMasterFile(file, handle = null) {
   monthRange = { from: "", to: "" }; monthFilterState = { operator: "=", value: "" }; accountantMode = false;
   if (migrated) markUnsaved(); else markSaved(); renderPerson(); renderNatureList(); render();
 }
-function isInSelectedPeriod(expense) { return !accountantMode || ((!monthRange.from || expense.date >= monthRange.from) && (!monthRange.to || expense.date <= monthRange.to)); }
+function isInSelectedPeriod(expense) { const month = monthOf(expense.date); return !accountantMode || ((!monthRange.from || month >= monthRange.from) && (!monthRange.to || month <= monthRange.to)); }
 function matchesMonthFilter(expense) {
   if (!monthFilterState.value) return true;
-  return monthFilterState.operator === "=" ? expense.date === monthFilterState.value : monthFilterState.operator === ">" ? expense.date > monthFilterState.value : expense.date < monthFilterState.value;
+  const month = monthOf(expense.date); return monthFilterState.operator === "=" ? month === monthFilterState.value : monthFilterState.operator === ">" ? month > monthFilterState.value : month < monthFilterState.value;
 }
-function comparable(expense, field) { return field === "amount" ? amountNumber(expense.amount) : String(expense[field] ?? ""); }
+function comparable(expense, field) { return field === "amount" ? amountNumber(expense.amount) : field === "month" ? monthOf(expense.date) : String(expense[field] ?? ""); }
 function sortedFilteredExpenses() {
   return expenses.filter(e => isInSelectedPeriod(e) && matchesMonthFilter(e)).sort((a, b) => {
     for (const rule of sortRules) {
@@ -349,9 +352,9 @@ function sortedFilteredExpenses() {
     return 0;
   });
 }
-function monthName(value) { return new Intl.DateTimeFormat("fr-FR", { month: "long", year: "numeric" }).format(new Date(`${value}-01T12:00:00`)); }
+function monthName(value) { return new Intl.DateTimeFormat("fr-FR", { month: "long", year: "numeric" }).format(new Date(`${monthOf(value)}-01T12:00:00`)); }
 function renderPeriodFilter() {
-  const months = [...new Set(expenses.map(expense => expense.date))].sort();
+  const months = [...new Set(expenses.map(expense => monthOf(expense.date)))].sort();
   periodFilter.hidden = !accountantMode || months.length === 0;
   if (!accountantMode || !months.length) return;
   const options = months.map(month => `<option value="${month}">${monthName(month)}</option>`).join("");
@@ -364,7 +367,7 @@ function renderMonthFilter() {
   // Le filtre ne propose que les mois réellement présents dans la comptabilité
   // ouverte : on évite ainsi de laisser croire que des mois vides contiennent
   // des dépenses.
-  const months = [...new Set(expenses.map(expense => expense.date).filter(Boolean))].sort();
+  const months = [...new Set(expenses.map(expense => monthOf(expense.date)).filter(Boolean))].sort();
   if (!months.includes(monthFilterState.value)) monthFilterState.value = "";
   monthOperator.value = monthFilterState.operator;
   monthFilter.innerHTML = `<option value="">Tous</option>${months.map(month => `<option value="${month}">${monthName(month)}</option>`).join("")}`;
@@ -394,7 +397,7 @@ function renderTotals() {
   const total = periodExpenses.reduce((sum, expense) => sum + amountNumber(expense.amount), 0);
   const kilometres = periodExpenses.filter(expense => expense.label === "Kilométrage").reduce((sum, expense) => sum + amountNumber(expense.kilometres || 0), 0);
   const primarySort = sortRules[0]?.field;
-  const groupByMonth = primarySort === "date";
+  const groupByMonth = primarySort === "month";
   document.querySelector("#grandTotal").textContent = euro(total);
   document.querySelector("#grandTotal").previousElementSibling.textContent = "Total :";
   document.querySelector("#kilometerTotal").textContent = kilometres ? `${new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 2 }).format(kilometres)} km` : "";
@@ -415,14 +418,18 @@ function render() {
   renderMonthFilter();
   const rows = sortedFilteredExpenses();
   document.querySelector("#expenseCount").textContent = `${expenses.length} dépense${expenses.length > 1 ? "s" : ""}`;
-  body.innerHTML = rows.map(e => { const route = needsRouteFields(e.label), direction = e.routeDirection || "↔"; const firstField = route ? `<input class="cell-input route-input" data-field="departure" value="${escapeHtml(e.departure || "")}" placeholder="Départ" aria-label="Départ" list="knownPlaces" />` : `<input class="cell-input observations-input" data-field="observations" value="${escapeHtml(e.observations || "")}" aria-label="Observations" />`; return `<tr data-id="${e.id}"><td><strong class="order-number">${escapeHtml(e.order)}</strong></td><td><input class="cell-input contract-input" data-field="contract" list="contractSuggestions" value="${escapeHtml(e.contract || "")}" aria-label="Contrat" /></td><td><select class="cell-select" data-field="label" aria-label="Libellé">${labelOptions(e.label)}</select></td><td><input class="cell-input amount" data-field="amount" inputmode="decimal" value="${escapeHtml(e.amount)}" aria-label="Montant TTC" ${e.label === "Kilométrage" ? "readonly title=\"Montant calculé à partir des kilomètres\"" : ""} /></td><td>${firstField}</td><td>${route ? `<select class="cell-select direction-select" data-field="routeDirection" aria-label="Sens du trajet"><option value="→" ${direction === "→" ? "selected" : ""}>⟶</option><option value="↔" ${direction === "↔" ? "selected" : ""}>⟷</option></select>` : ""}</td><td>${route ? `<input class="cell-input route-input" data-field="arrival" value="${escapeHtml(e.arrival || "")}" placeholder="Arrivée" aria-label="Arrivée" list="knownPlaces" />` : ""}</td><td>${e.label === "Kilométrage" ? `<input class="cell-input kilometer-recap" data-field="kilometres" inputmode="decimal" value="${escapeHtml(e.kilometres ?? "")}" placeholder="km" aria-label="Kilomètres" title="Modifier les kilomètres" />` : ""}</td><td><button class="delete-button" data-action="delete" aria-label="Supprimer ${escapeHtml(e.order)}" title="Supprimer">×</button></td></tr>`; }).join("");
+  body.innerHTML = rows.map(e => { const route = needsRouteFields(e.label), direction = e.routeDirection || "↔"; const firstField = route ? `<input class="cell-input route-input" data-field="departure" value="${escapeHtml(e.departure || "")}" placeholder="Départ" aria-label="Départ" list="knownPlaces" />` : `<input class="cell-input observations-input" data-field="observations" value="${escapeHtml(e.observations || "")}" aria-label="Observations" />`; const dateField = `<label class="expense-date-cell"><span>${escapeHtml(displayDate(e.date))}</span><input class="expense-date-input" data-field="date" type="date" value="${escapeHtml(e.date)}" aria-label="Date de la dépense" /></label>`; return `<tr data-id="${e.id}"><td><strong class="order-number">${escapeHtml(e.order)}</strong></td><td>${dateField}</td><td><select class="cell-select" data-field="label" aria-label="Libellé">${labelOptions(e.label)}</select></td><td><input class="cell-input amount" data-field="amount" inputmode="decimal" value="${escapeHtml(e.amount)}" aria-label="Montant TTC" ${e.label === "Kilométrage" ? "readonly title=\"Montant calculé à partir des kilomètres\"" : ""} /></td><td>${firstField}</td><td>${route ? `<select class="cell-select direction-select" data-field="routeDirection" aria-label="Sens du trajet"><option value="" ${!e.routeDirection ? "selected" : ""}>—</option><option value="→" ${direction === "→" ? "selected" : ""}>⟶</option><option value="↔" ${direction === "↔" ? "selected" : ""}>⟷</option></select>` : ""}</td><td>${route ? `<input class="cell-input route-input" data-field="arrival" value="${escapeHtml(e.arrival || "")}" placeholder="Arrivée" aria-label="Arrivée" list="knownPlaces" />` : ""}</td><td>${e.label === "Kilométrage" ? `<input class="cell-input kilometer-recap" data-field="kilometres" inputmode="decimal" value="${escapeHtml(e.kilometres ?? "")}" placeholder="km" aria-label="Kilomètres" title="Modifier les kilomètres" />` : ""}</td><td><input class="cell-input contract-input" data-field="contract" list="contractSuggestions" value="${escapeHtml(e.contract || "")}" aria-label="Contrat" /></td><td><button class="delete-button" data-action="delete" aria-label="Supprimer ${escapeHtml(e.order)}" title="Supprimer">×</button></td></tr>`; }).join("");
   body.querySelectorAll("tr").forEach(row => row.classList.toggle("scanlot-recent-import", recentScanLotImportIds.has(row.dataset.id)));
+  body.querySelectorAll('.direction-select option[value="→"]').forEach(option => { option.textContent = "--->"; });
+  body.querySelectorAll('.direction-select option[value="↔"]').forEach(option => { option.textContent = "<--->"; });
   if (emptyState) emptyState.hidden = rows.length !== 0; renderTotals(); renderPeriodFilter(); updateEntryAccess();
 }
 function getExpense(id) { return expenses.find(e => e.id === id); }
 function updateExpense(expense, field, value) {
   if (field === "amount") { const amount = amountNumber(value); if (!Number.isFinite(amount) || amount < 0) return false; expense.amount = amount.toFixed(2).replace(".", ","); }
   else if (field === "kilometres") { const kilometres = amountNumber(value), amount = calculatedMileageAmount(kilometres); if (!Number.isFinite(kilometres) || kilometres < 0 || !Number.isFinite(amount)) return false; expense.kilometres = kilometres; expense.amount = amount.toFixed(2).replace(".", ","); }
+  else if (field === "date") { if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false; expense.date = value; }
+  else if (field === "routeDirection") expense.routeDirection = value || "none";
   else if (field === "label") { expense.label = value; expense.account = typeFor(value).account; }
   else if (field === "contract") { const contract = value.trim().replace(/\s+/g, " "); expense.contract = contract; if (contract && !contracts.some(item => item.localeCompare(contract, "fr", { sensitivity: "accent" }) === 0)) { contracts.push(contract); contracts.sort((a, b) => a.localeCompare(b, "fr")); } }
   else expense[field] = value;
@@ -480,7 +487,7 @@ document.querySelector("#expenseForm").addEventListener("submit", event => {
   const type = typeFor(selectedLabel);
   const calculatedAmount = isMileageExpense() ? calculatedMileageAmount(amount) : amount;
   if (!Number.isFinite(calculatedAmount)) { alert("Le coefficient kilométrique actif est invalide. Vérifiez les Paramètres."); return; }
-  expenses.push({ id: crypto.randomUUID(), order: nextOrder(dateInput.value), date: dateInput.value, label: type.label, account: type.account, amount: calculatedAmount.toFixed(2).replace(".", ","), kilometres: isMileageExpense() ? amount : undefined, routeDirection: needsRouteFields() ? "↔" : undefined });
+  expenses.push({ id: crypto.randomUUID(), order: nextOrder(dateInput.value), date: `${dateInput.value}-01`, label: type.label, account: type.account, amount: calculatedAmount.toFixed(2).replace(".", ","), kilometres: isMileageExpense() ? amount : undefined, routeDirection: needsRouteFields() ? "↔" : undefined });
   recentScanLotImportIds.clear(); markUnsaved(); selectedLabel = ""; amountInput.value = ""; amountInput.setCustomValidity(""); renderNatureList(); updateExpenseInputMode(); render(); amountInput.focus();
 });
 body.addEventListener("change", event => {
@@ -490,6 +497,13 @@ body.addEventListener("change", event => {
   render();
 });
 body.addEventListener("click", event => {
+  const dateField = event.target.closest(".expense-date-cell");
+  if (dateField) {
+    const picker = dateField.querySelector('input[type="date"]');
+    if (picker?.showPicker) { event.preventDefault(); try { picker.showPicker(); } catch { picker.focus(); } }
+    else picker?.focus();
+    return;
+  }
   const button = event.target.closest('[data-action="delete"]'); if (!button) return;
   const expense = getExpense(button.closest("tr").dataset.id);
   if (confirm(`Supprimer la dépense ${expense.order} ? Son numéro ne sera jamais réutilisé.`)) { expenses = expenses.filter(e => e.id !== expense.id); markUnsaved(); render(); }
@@ -498,12 +512,13 @@ monthOperator.addEventListener("change", () => { monthFilterState.operator = mon
 monthFilter.addEventListener("change", () => { monthFilterState.value = monthFilter.value; render(); });
 fromMonth.addEventListener("change", () => { monthRange.from = fromMonth.value; if (monthRange.from > monthRange.to) monthRange.to = monthRange.from; render(); });
 toMonth.addEventListener("change", () => { monthRange.to = toMonth.value; if (monthRange.to < monthRange.from) monthRange.from = monthRange.to; render(); });
-const fields = [{ value:"contract", label:"Contrat" }, { value:"date", label:"Mois" }, { value:"label", label:"Libellé" }, { value:"amount", label:"Montant TTC" }, { value:"order", label:"N° d’ordre" }];
+const fields = [{ value:"contract", label:"Contrat" }, { value:"month", label:"Mois" }, { value:"date", label:"Date" }, { value:"departure", label:"Départ" }, { value:"label", label:"Libellé" }, { value:"amount", label:"Montant TTC" }, { value:"order", label:"N° d’ordre" }];
 const sortRulesEl = document.querySelector("#sortRules");
 function renderSortRules() { sortRulesEl.innerHTML = sortRules.map((rule, index) => `<div class="sort-rule"><span class="rule-number">${index + 1}</span><select class="rule-select" data-sort-field="${index}">${fields.map(field => `<option value="${field.value}" ${field.value === rule.field ? "selected" : ""}>${field.label}</option>`).join("")}</select><select class="rule-select" data-sort-direction="${index}"><option value="asc" ${rule.direction === "asc" ? "selected" : ""}>Croissant</option><option value="desc" ${rule.direction === "desc" ? "selected" : ""}>Décroissant</option></select><button type="button" class="remove-rule" data-remove-rule="${index}" aria-label="Supprimer ce critère">×</button></div>`).join(""); }
-document.querySelector("#sortByMonthButton").addEventListener("click", () => { sortRules = [{ field: "date", direction: "asc" }, { field: "label", direction: "asc" }, { field: "order", direction: "asc" }]; render(); });
-document.querySelector("#sortByLabelButton").addEventListener("click", () => { sortRules = [{ field: "label", direction: "asc" }, { field: "date", direction: "asc" }, { field: "order", direction: "asc" }]; render(); });
-document.querySelector("#sortByContractButton").addEventListener("click", () => { sortRules = [{ field: "contract", direction: "desc" }, { field: "date", direction: "asc" }, { field: "order", direction: "asc" }]; render(); });
+document.querySelector("#sortByMonthButton").addEventListener("click", () => { sortRules = [{ field: "month", direction: "desc" }, { field: "label", direction: "asc" }, { field: "date", direction: "desc" }, { field: "order", direction: "asc" }]; render(); });
+document.querySelector("#sortByLabelButton").addEventListener("click", () => { sortRules = [{ field: "label", direction: "asc" }, { field: "month", direction: "desc" }, { field: "date", direction: "desc" }, { field: "order", direction: "asc" }]; render(); });
+document.querySelector("#sortByContractButton").addEventListener("click", () => { sortRules = [{ field: "contract", direction: "desc" }, { field: "date", direction: "desc" }, { field: "order", direction: "asc" }]; render(); });
+document.querySelector("#sortByDateDepartureButton").addEventListener("click", () => { sortRules = [{ field: "date", direction: "desc" }, { field: "order", direction: "asc" }, { field: "label", direction: "asc" }, { field: "departure", direction: "asc" }]; render(); });
 document.querySelector("#addSortRule").addEventListener("click", () => { sortRules.push({ field: "order", direction: "asc" }); renderSortRules(); });
 sortRulesEl.addEventListener("change", event => { const index = event.target.dataset.sortField ?? event.target.dataset.sortDirection; if (index !== undefined) sortRules[index][event.target.dataset.sortField !== undefined ? "field" : "direction"] = event.target.value; });
 sortRulesEl.addEventListener("click", event => { const index = event.target.dataset.removeRule; if (index !== undefined && sortRules.length > 1) { sortRules.splice(index, 1); renderSortRules(); } });
@@ -517,7 +532,7 @@ function csvTotals(expensesToSummarize) {
   return { total, kilometres, totalsByLabel };
 }
 async function exportCsv() {
-  const headers = ["N° d’ordre", "Contrat", "Mois de saisie", "Libellé", "N° compte comptable", "Montant TTC", "Départ / observations", "Sens", "Arrivée", "Kilomètres"];
+  const headers = ["N° d’ordre", "Contrat", "Date", "Libellé", "N° compte comptable", "Montant TTC", "Départ / observations", "Sens", "Arrivée", "Kilomètres"];
   const byMonthThenDate = expenses.filter(isInSelectedPeriod).sort((a, b) => a.date.localeCompare(b.date) || a.order.localeCompare(b.order, "fr", { numeric: true }));
   const { total, kilometres, totalsByLabel } = csvTotals(byMonthThenDate);
   const summaryRows = [
@@ -526,7 +541,7 @@ async function exportCsv() {
     ["Total général", "", "", "", "", total.toFixed(2).replace(".", ","), "", "", "", kilometres || ""],
     ...[...totalsByLabel.entries()].map(([label, amount]) => [`Total ${label}`, "", "", "", "", amount.toFixed(2).replace(".", ","), "", "", "", ""])
   ];
-  const csv = [headers, ...byMonthThenDate.map(e => [e.order, e.contract, e.date, e.label, e.account, e.amount, e.departure || e.observations, e.routeDirection, e.arrival, e.kilometres]), ...summaryRows].map(row => row.map(csvValue).join(";")).join("\r\n");
+  const csv = [headers, ...byMonthThenDate.map(e => [e.order, e.contract, displayDate(e.date), e.label, e.account, e.amount, e.departure || e.observations, e.routeDirection === "none" ? "" : e.routeDirection, e.arrival, e.kilometres]), ...summaryRows].map(row => row.map(csvValue).join(";")).join("\r\n");
   const content = "\uFEFF" + csv;
   if (csvFolderHandle) {
     if (!await canWriteFolder(csvFolderHandle, true)) { alert("L’autorisation du dossier CSV n’est plus valide. Sélectionnez-le à nouveau dans Paramètres."); return false; }
@@ -560,7 +575,7 @@ async function importScanLotCsv(file) {
     if (scanLotImports().some(entry => entry.sha256 === fingerprint)) { alert("Ce fichier a déjà été comptabilisé dans ScanFac."); return; }
     const rows = parseScanLotRows(await file.text());
     const previousMaster = JSON.parse(JSON.stringify(masterBackup)), previousExpenses = expenses, previousSequences = { ...sequences }, previousUnsaved = hasUnsavedChanges, previousRecentImportIds = recentScanLotImportIds;
-    const importedExpenses = rows.map(row => ({ id: crypto.randomUUID(), order: nextOrder(row.month), date: row.month, label: row.type.label, account: row.type.account, amount: row.amount.toFixed(2).replace(".", ","), observations: row.supplier, routeDirection: needsRouteFields(row.type.label) ? "↔" : undefined }));
+    const importedExpenses = rows.map(row => ({ id: crypto.randomUUID(), order: nextOrder(row.month), date: `${row.month}-01`, label: row.type.label, account: row.type.account, amount: row.amount.toFixed(2).replace(".", ","), observations: row.supplier, routeDirection: needsRouteFields(row.type.label) ? "↔" : undefined }));
     expenses = [...expenses, ...importedExpenses]; recentScanLotImportIds = new Set(importedExpenses.map(expense => expense.id));
     masterBackup.scanLotImports = [...scanLotImports(), { fileName: file.name, sha256: fingerprint, importedAt: new Date().toISOString(), count: importedExpenses.length, status: "Comptabilisé" }];
     masterBackup.ownerName = personName;
