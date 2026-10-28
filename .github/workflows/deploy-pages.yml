@@ -24,9 +24,14 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
       - name: Appliquer la version de publication
-        run: node "$(find . -path '*/scripts/set-version.mjs' -type f -print -quit)"
+        run: |
+          script="$(find . -path '*/scripts/set-version.mjs' -type f -print -quit)"
+          node "$script"
+          dist_dir="$(cd "$(dirname "$script")/../dist" && pwd)"
+          mkdir .pages-build
+          cp -R "$dist_dir"/. .pages-build/
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: ./1-ScanFac*/dist
+          path: ./.pages-build
       - id: deployment
         uses: actions/deploy-pages@v4
