@@ -57,6 +57,7 @@ editParametersButton.addEventListener("click", () => { editingParameters = !edit
 document.querySelector("#chooseWorkFolder").addEventListener("click", () => chooseFolder(WORK_FOLDER_KEY, "Travail"));
 document.querySelector("#chooseBackupFolder").addEventListener("click", () => chooseFolder(BACKUP_FOLDER_KEY, "Sauvegardes"));
 document.querySelector("#chooseCsvFolder").addEventListener("click", () => chooseFolder(CSV_FOLDER_KEY, "CSV"));
+document.querySelector("#returnToApp").addEventListener("click", () => { if (window.opener && !window.opener.closed) { window.opener.focus(); window.close(); } else window.location.href = "index.html"; });
 document.querySelector("#restoreDefaults").addEventListener("click", () => { if (!confirm("Rétablir les valeurs par défaut ? Les modifications non enregistrées seront perdues.")) return; parameters = JSON.parse(JSON.stringify(window.SCANFAC_PARAMETERS_DEFAULT)); render(); markParametersPending("Valeurs par défaut sélectionnées. Sauvegardez depuis la fenêtre de travail."); });
 render(); loadSavedParameters(); renderFolderNames();
 if ("serviceWorker" in navigator && location.protocol !== "file:") window.addEventListener("load", () => navigator.serviceWorker.register("service-worker.js?v=28").catch(() => {}));
