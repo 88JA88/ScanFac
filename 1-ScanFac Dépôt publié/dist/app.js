@@ -560,21 +560,28 @@ function csvTotals(expensesToSummarize) {
   const mileageAmounts = mileageAllowanceByExpense(expensesToSummarize);
   const total = expensesToSummarize.reduce((sum, expense) => sum + displayedAmount(expense, mileageAmounts), 0);
   const kilometres = expensesToSummarize.filter(expense => expense.label === "Kilométrage").reduce((sum, expense) => sum + amountNumber(expense.kilometres || 0), 0);
-  const totalsByLabel = new Map();
-  expensesToSummarize.forEach(expense => totalsByLabel.set(expense.label, (totalsByLabel.get(expense.label) || 0) + displayedAmount(expense, mileageAmounts)));
-  return { total, kilometres, totalsByLabel, mileageAmounts };
+  const primarySort = sortRules[0]?.field;
+  const groupByMonth = primarySort === "month";
+  const groupTitle = groupByMonth ? "Totaux par mois" : primarySort === "contract" ? "Totaux par contrat" : "Totaux par libellé";
+  const totalsByGroup = new Map();
+  // Les récapitulatifs reprennent la même clé et le même ordre que le tableau affiché.
+  expensesToSummarize.forEach(expense => {
+    const key = groupByMonth ? monthName(expense.date) : primarySort === "contract" ? (expense.contract || "Sans contrat") : expense.label;
+    totalsByGroup.set(key, (totalsByGroup.get(key) || 0) + displayedAmount(expense, mileageAmounts));
+  });
+  return { total, kilometres, totalsByGroup, groupTitle, mileageAmounts };
 }
 async function exportCsv() {
   const headers = ["N° d’ordre", "Contrat", "Date", "Libellé", "N° compte comptable", "Montant TTC", "Départ / observations", "Sens", "Arrivée", "Kilomètres"];
-  const byMonthThenDate = expenses.filter(isInSelectedPeriod).sort((a, b) => a.date.localeCompare(b.date) || a.order.localeCompare(b.order, "fr", { numeric: true }));
-  const { total, kilometres, totalsByLabel, mileageAmounts } = csvTotals(byMonthThenDate);
+  const sortedExpenses = sortedFilteredExpenses();
+  const { total, kilometres, totalsByGroup, groupTitle, mileageAmounts } = csvTotals(sortedExpenses);
   const summaryRows = [
     [],
-    ["Récapitulatif", "", "", "", "", "Montant TTC", "", "", "", "Kilomètres"],
+    [groupTitle, "", "", "", "", "Montant TTC", "", "", "", "Kilomètres"],
     ["Total général", "", "", "", "", total.toFixed(2).replace(".", ","), "", "", "", kilometres || ""],
-    ...[...totalsByLabel.entries()].map(([label, amount]) => [`Total ${label}`, "", "", "", "", amount.toFixed(2).replace(".", ","), "", "", "", ""])
+    ...[...totalsByGroup.entries()].map(([label, amount]) => [`Total ${label}`, "", "", "", "", amount.toFixed(2).replace(".", ","), "", "", "", ""])
   ];
-  const csv = [headers, ...byMonthThenDate.map(e => [e.order, e.contract, displayDate(e.date), e.label, e.account, formattedAmount(displayedAmount(e, mileageAmounts)), e.departure || e.observations, e.routeDirection === "none" ? "" : e.routeDirection, e.arrival, e.kilometres]), ...summaryRows].map(row => row.map(csvValue).join(";")).join("\r\n");
+  const csv = [headers, ...sortedExpenses.map(e => [e.order, e.contract, displayDate(e.date), e.label, e.account, formattedAmount(displayedAmount(e, mileageAmounts)), e.departure || e.observations, e.routeDirection === "none" ? "" : e.routeDirection, e.arrival, e.kilometres]), ...summaryRows].map(row => row.map(csvValue).join(";")).join("\r\n");
   const content = "\uFEFF" + csv;
   if (csvFolderHandle) {
     if (!await canWriteFolder(csvFolderHandle, true)) { alert("L’autorisation du dossier CSV n’est plus valide. Sélectionnez-le à nouveau dans Paramètres."); return false; }
