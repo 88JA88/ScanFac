@@ -576,12 +576,12 @@ async function exportCsv() {
   const sortedExpenses = sortedFilteredExpenses();
   const { total, kilometres, totalsByGroup, groupTitle, mileageAmounts } = csvTotals(sortedExpenses);
   const summaryRows = [
-    [],
     [groupTitle, "", "", "", "", "Montant TTC", "", "", "", "Kilomètres"],
     ["Total général", "", "", "", "", total.toFixed(2).replace(".", ","), "", "", "", kilometres || ""],
     ...[...totalsByGroup.entries()].map(([label, amount]) => [`Total ${label}`, "", "", "", "", amount.toFixed(2).replace(".", ","), "", "", "", ""])
   ];
-  const csv = [headers, ...sortedExpenses.map(e => [e.order, e.contract, displayDate(e.date), e.label, e.account, formattedAmount(displayedAmount(e, mileageAmounts)), e.departure || e.observations, e.routeDirection === "none" ? "" : e.routeDirection, e.arrival, e.kilometres]), ...summaryRows].map(row => row.map(csvValue).join(";")).join("\r\n");
+  const listingRows = [headers, ...sortedExpenses.map(e => [e.order, e.contract, displayDate(e.date), e.label, e.account, formattedAmount(displayedAmount(e, mileageAmounts)), e.departure || e.observations, e.routeDirection === "none" ? "" : e.routeDirection, e.arrival, e.kilometres])];
+  const csv = [...summaryRows, [], ...listingRows].map(row => row.map(csvValue).join(";")).join("\r\n");
   const content = "\uFEFF" + csv;
   if (csvFolderHandle) {
     if (!await canWriteFolder(csvFolderHandle, true)) { alert("L’autorisation du dossier CSV n’est plus valide. Sélectionnez-le à nouveau dans Paramètres."); return false; }
